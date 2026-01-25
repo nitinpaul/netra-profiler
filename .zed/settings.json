@@ -1,0 +1,12 @@
+{
+  "python.venv_path": ".venv",
+  "python.language_servers": ["pyright", "ruff"],
+  "editor.format_on_save": "on",
+  "editor.code_actions_on_save": {
+    "source.fixAll.ruff": true,
+    "source.organizeImports.ruff": true,
+  },
+  "terminal.env": {
+    "VIRTUAL_ENV": ".venv",
+  },
+}
