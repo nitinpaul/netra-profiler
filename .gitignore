@@ -18,6 +18,10 @@ build/
 .coverage
 htmlcov/
 
+# Benchmark data
+benchmarks/data/*.csv
+benchmarks/data/*.parquet
+
 # Editors & IDEs
 .idea/
 .vscode/
