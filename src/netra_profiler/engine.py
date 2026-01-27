@@ -24,7 +24,7 @@ def build_query_plan(lf: pl.LazyFrame) -> pl.LazyFrame:
     # We iterate over the schema to decide what stats to compute for which type.
     schema = lf.collect_schema()
     for column_name, data_type in schema.items():
-        # --- Universal Stats (All Columns) ---
+        # Universal Stats (All Columns)
         expressions.extend(
             [
                 pl.col(column_name).null_count().alias(f"{column_name}_null_count"),
@@ -34,7 +34,7 @@ def build_query_plan(lf: pl.LazyFrame) -> pl.LazyFrame:
             ]
         )
 
-        # --- Numeric Stats (Integers & Floats) ---
+        # Numeric Stats (Integers & Floats)
         if data_type.is_numeric():
             expressions.extend(
                 [
@@ -45,9 +45,23 @@ def build_query_plan(lf: pl.LazyFrame) -> pl.LazyFrame:
                 ]
             )
 
-        # --- String/Categorical Stats ---
+        # String/Categorical Stats
         elif data_type in (pl.String, pl.Categorical):
-            pass  # TODO
+            # We create a string-expression for the column (DRY)
+            # If it's categorical, we cast to String to access .str namespace methods
+            column_as_string = pl.col(column_name).cast(pl.String)
+
+            expressions.extend(
+                [
+                    # 1. Lexicographical stats (First/Last alphabetical value)
+                    column_as_string.min().alias(f"{column_name}_min"),
+                    column_as_string.max().alias(f"{column_name}_max"),
+                    # 2. Length stats
+                    column_as_string.str.len_chars().mean().alias(f"{column_name}_len_mean"),
+                    column_as_string.str.len_chars().min().alias(f"{column_name}_len_min"),
+                    column_as_string.str.len_chars().max().alias(f"{column_name}_len_max"),
+                ]
+            )
 
     # 3. Construct the Query Plan
     return lf.select(expressions)

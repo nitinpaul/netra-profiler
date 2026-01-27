@@ -42,8 +42,24 @@ def test_profiler_basic_stats(sample_df: pl.DataFrame) -> None:
     assert profile["age_mean"] == pytest.approx(sample_df["age"].mean())
 
     # 3. Check String Stats (City)
-    assert profile["city_null_count"] == 1
+    assert profile["city_null_count"] == sample_df["city"].null_count()
     # "Groningen" appears twice, so approx_n_unique should be 3 (Groningen, Thrissur, Delhi)
     # Note: approx_n_unique is approximate, on tiny data, it might behave strictly or loosely.
     # For small integers/strings, Polars often exact-counts, but we just check it exists for now.
     assert "city_n_unique" in profile
+
+    # "Delhi" should be min alphabetical
+    # "Thrissur" should be max alphabetical
+    assert profile["city_min"] == "Delhi"
+    assert profile["city_max"] == "Thrissur"
+
+    # Lengths:
+    # Groningen (9), Thrissur (8), Delhi (5).
+
+    # We calculate the lengths dynamically from the input data
+    # Note: Nulls are ignored.
+    city_lengths = sample_df["city"].str.len_chars()
+
+    assert profile["city_len_min"] == city_lengths.min()  # 5 (Delhi)
+    assert profile["city_len_max"] == city_lengths.max()  # 9 (Groningen)
+    assert profile["city_len_mean"] == pytest.approx(city_lengths.mean())
