@@ -47,7 +47,7 @@ class Profiler:
         # 2. Execute with Streaming
         # We add "type: ignore" to silence the false positive from strict type checkers.
         # The argument is valid at runtime.
-        result_df = query_plan.collect(engine="streaming")  # type: ignore
+        result_df = query_plan.collect(engine="streaming")
 
         # 3. Serialize Output
         # The result is always a 1-row DataFrame.

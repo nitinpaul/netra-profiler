@@ -19,7 +19,7 @@ def sample_df() -> pl.DataFrame:
     )
 
 
-def test_profiler_basic_stats(sample_df: pl.DataFrame):
+def test_profiler_basic_stats(sample_df: pl.DataFrame) -> None:
     """
     Verifies that the profiler returns the correct statistical values.
     """
