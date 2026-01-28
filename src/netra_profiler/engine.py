@@ -1,17 +1,17 @@
 import polars as pl
 
 
-def build_query_plan(lf: pl.LazyFrame) -> pl.LazyFrame:
+def build_scalar_plan(lf: pl.LazyFrame) -> pl.LazyFrame:
     """
-    Builds a single, massive Polars expression graph to compute
-    summary statistics for all the columns in a single pass.
+    PASS 1: Scalar Statistics (Fast, Streaming-Friendly).
+    Computes single-value stats: Mean, Min, Max, Quantiles, Nulls.
 
     Args:
         lf: The input LazyFrame
 
     Returns:
         A LazyFrame which yields a 1-row DataFrame containing
-        all computed statistics when collected.
+        all computed scalar statistics when collected.
     """
 
     expressions: list[pl.Expr] = []
@@ -84,3 +84,78 @@ def build_query_plan(lf: pl.LazyFrame) -> pl.LazyFrame:
 
     # 3. Construct the Query Plan
     return lf.select(expressions)
+
+
+def build_histogram_plans(lf: pl.LazyFrame) -> list[pl.LazyFrame]:
+    """
+    PASS 2: Histogram Data Fetcher.
+    Creates a list of execution plans to fetch raw numeric column data.
+
+    Args:
+        lf: The input LazyFrame.
+
+    Returns:
+        A list of LazyFrames, where each plan selects a single numeric column.
+    """
+
+    plans: list[pl.LazyFrame] = []
+    schema = lf.collect_schema()
+
+    for column_name, data_type in schema.items():
+        if data_type in (
+            pl.Int8,
+            pl.Int16,
+            pl.Int32,
+            pl.Int64,
+            pl.Float32,
+            pl.Float64,
+            pl.UInt8,
+            pl.UInt16,
+            pl.UInt32,
+            pl.UInt64,
+        ):
+            # We fetch the raw column data (cast to Float64) instead of calculating
+            # the histogram in the Lazy engine. This allows the core orchestrator
+            # to execute .hist() in Eager mode, which guarantees that Polars returns
+            # the full bin metadata (breakpoints/categories) necessary for plotting,
+            # rather than the optimized list of counts often returned by the Lazy engine.
+            plan = lf.select(pl.col(column_name).cast(pl.Float64))
+            plans.append(plan)
+
+    return plans
+
+
+def build_top_k_plan(lf: pl.LazyFrame, k: int = 10) -> list[pl.LazyFrame]:
+    """
+    PASS 3: Top-K Values (Most Frequent Items).
+    Computes the top 10 most frequent values for all string/categorical columns.
+
+    Args:
+        lf: The input LazyFrame
+
+    Returns:
+        A list of LazyFrames. Each LazyFrame corresponds to a specific column
+        and yields a small table with 'value' and 'count' columns.
+    """
+    plans: list[pl.LazyFrame] = []
+    schema = lf.collect_schema()
+
+    for column_name, data_type in schema.items():
+        if data_type in (pl.String, pl.Categorical):
+            # Logic: GroupBy -> Count -> Sort -> Head(10)
+            # We explicitly cast to String to handle Categoricals safely
+            plan = (
+                lf.select(pl.col(column_name).cast(pl.String).alias("value"))
+                .group_by("value")
+                .len()  # counts the group size
+                .sort("len", descending=True)
+                .head(k)
+                .select(
+                    pl.lit(column_name).alias("column_name"),
+                    pl.col("value"),
+                    pl.col("len").alias("count"),
+                )
+            )
+            plans.append(plan)
+
+    return plans

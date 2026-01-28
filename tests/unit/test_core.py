@@ -30,10 +30,10 @@ def test_profiler_basic_stats(sample_df: pl.DataFrame) -> None:
     # Debug: Print the report if the test fails so we can see what happened
     print(f"\nGenerared Report: {profile}")
 
-    # 1. Check Global Stats
+    # 1. Verify Global Stats
     assert profile["table_row_count"] == sample_df.height
 
-    # 2. Check Numeric Stats (Age)
+    # 2. Verify Numeric Stats (Age)
     assert profile["age_min"] == sample_df["age"].min()
     assert profile["age_max"] == sample_df["age"].max()
     assert profile["age_null_count"] == sample_df["age"].null_count()
@@ -44,11 +44,9 @@ def test_profiler_basic_stats(sample_df: pl.DataFrame) -> None:
     assert profile["age_p50"] == sample_df["age"].median()
     assert profile["age_p75"] == sample_df["age"].quantile(0.75)
 
-    # 3. Check String Stats (City)
+    # 3. Verify String Stats (City)
     assert profile["city_null_count"] == sample_df["city"].null_count()
     # "Groningen" appears twice, so approx_n_unique should be 3 (Groningen, Thrissur, Delhi)
-    # Note: approx_n_unique is approximate, on tiny data, it might behave strictly or loosely.
-    # For small integers/strings, Polars often exact-counts, but we just check it exists for now.
     assert "city_n_unique" in profile
 
     # "Delhi" should be min alphabetical
@@ -58,11 +56,35 @@ def test_profiler_basic_stats(sample_df: pl.DataFrame) -> None:
 
     # Lengths:
     # Groningen (9), Thrissur (8), Delhi (5).
-
-    # We calculate the lengths dynamically from the input data
-    # Note: Nulls are ignored.
     city_lengths = sample_df["city"].str.len_chars()
 
     assert profile["city_len_min"] == city_lengths.min()  # 5 (Delhi)
     assert profile["city_len_max"] == city_lengths.max()  # 9 (Groningen)
     assert profile["city_len_mean"] == pytest.approx(city_lengths.mean())
+
+    # 4. Verify Distributions
+    # Check Top-K Structure (City)
+    # Expected: A list of dicts like [{'value': 'Groningen', 'count': 2}, ...]
+    assert "city_top_k" in profile
+    city_top_k = profile["city_top_k"]
+    assert isinstance(city_top_k, list)
+    assert len(city_top_k) > 0
+
+    most_frequent_city = city_top_k[0]["value"]
+    expected_count = sample_df.filter(pl.col("city") == most_frequent_city).height
+
+    assert city_top_k[0]["count"] == expected_count
+
+    # Check Histogram Structure (Age)
+    assert "age_histogram" in profile
+    age_histogram = profile["age_histogram"]
+
+    # Verify it is a List of Dictionaries (from Structs)
+    assert isinstance(age_histogram, list)
+    assert len(age_histogram) > 0
+
+    # Polars Histogram Struct keys: 'break_point', 'category', 'count'
+    # # The 'category' key holds the range string e.g. "(25, 30]"
+    first_bin = age_histogram[0]
+    assert "breakpoint" in first_bin
+    assert "count" in first_bin
