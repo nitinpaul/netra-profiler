@@ -35,13 +35,32 @@ def build_query_plan(lf: pl.LazyFrame) -> pl.LazyFrame:
         )
 
         # Numeric Stats (Integers & Floats)
-        if data_type.is_numeric():
+        if data_type in (
+            pl.Int8,
+            pl.Int16,
+            pl.Int32,
+            pl.Int64,
+            pl.Float32,
+            pl.Float64,
+            pl.UInt8,
+            pl.UInt16,
+            pl.UInt32,
+            pl.UInt64,
+        ):
             expressions.extend(
                 [
+                    # Basic
                     pl.col(column_name).mean().alias(f"{column_name}_mean"),
                     pl.col(column_name).min().alias(f"{column_name}_min"),
                     pl.col(column_name).max().alias(f"{column_name}_max"),
+                    # Distribution Stats
                     pl.col(column_name).std().alias(f"{column_name}_std"),
+                    pl.col(column_name).skew().alias(f"{column_name}_skew"),
+                    pl.col(column_name).kurtosis().alias(f"{column_name}_kurtosis"),
+                    # Quantiles (Percentiles)
+                    pl.col(column_name).quantile(0.25).alias(f"{column_name}_p25"),
+                    pl.col(column_name).median().alias(f"{column_name}_p50"),
+                    pl.col(column_name).quantile(0.75).alias(f"{column_name}_p75"),
                 ]
             )
 

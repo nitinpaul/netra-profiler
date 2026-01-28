@@ -34,12 +34,15 @@ def test_profiler_basic_stats(sample_df: pl.DataFrame) -> None:
     assert profile["table_row_count"] == sample_df.height
 
     # 2. Check Numeric Stats (Age)
-    # Note: Polars mean([25, 30, 35, 25]) = 28.75. Nulls are ignored.
     assert profile["age_min"] == sample_df["age"].min()
     assert profile["age_max"] == sample_df["age"].max()
     assert profile["age_null_count"] == sample_df["age"].null_count()
     # We use pytest.approx for floating point comparisons to avoid precision errors
     assert profile["age_mean"] == pytest.approx(sample_df["age"].mean())
+    assert profile["age_std"] == pytest.approx(sample_df["age"].std())
+    assert profile["age_p25"] == sample_df["age"].quantile(0.25)
+    assert profile["age_p50"] == sample_df["age"].median()
+    assert profile["age_p75"] == sample_df["age"].quantile(0.75)
 
     # 3. Check String Stats (City)
     assert profile["city_null_count"] == sample_df["city"].null_count()
