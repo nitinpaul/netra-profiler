@@ -21,7 +21,7 @@ def build_scalar_plan(lf: pl.LazyFrame) -> pl.LazyFrame:
     expressions.append(pl.len().alias("table_row_count"))
 
     # 2. Column-Level Computations
-    # We iterate over the schema to decide what stats to compute for which type.
+    # We iterate over the schema to decide what stats to compute for each type.
     schema = lf.collect_schema()
     for column_name, data_type in schema.items():
         # Universal Stats (All Columns)
@@ -35,18 +35,7 @@ def build_scalar_plan(lf: pl.LazyFrame) -> pl.LazyFrame:
         )
 
         # Numeric Stats (Integers & Floats)
-        if data_type in (
-            pl.Int8,
-            pl.Int16,
-            pl.Int32,
-            pl.Int64,
-            pl.Float32,
-            pl.Float64,
-            pl.UInt8,
-            pl.UInt16,
-            pl.UInt32,
-            pl.UInt64,
-        ):
+        if data_type.is_numeric():
             expressions.extend(
                 [
                     # Basic
@@ -65,20 +54,18 @@ def build_scalar_plan(lf: pl.LazyFrame) -> pl.LazyFrame:
             )
 
         # String/Categorical Stats
-        elif data_type in (pl.String, pl.Categorical):
+        elif data_type in (pl.String, pl.Categorical, pl.Enum):
             # We create a string-expression for the column (DRY)
-            # If it's categorical, we cast to String to access .str namespace methods
-            column_as_string = pl.col(column_name).cast(pl.String)
-
+            column_string = pl.col(column_name).cast(pl.String)
             expressions.extend(
                 [
                     # 1. Lexicographical stats (First/Last alphabetical value)
-                    column_as_string.min().alias(f"{column_name}_min"),
-                    column_as_string.max().alias(f"{column_name}_max"),
+                    column_string.min().alias(f"{column_name}_min"),
+                    column_string.max().alias(f"{column_name}_max"),
                     # 2. Length stats
-                    column_as_string.str.len_chars().mean().alias(f"{column_name}_len_mean"),
-                    column_as_string.str.len_chars().min().alias(f"{column_name}_len_min"),
-                    column_as_string.str.len_chars().max().alias(f"{column_name}_len_max"),
+                    column_string.str.len_chars().mean().alias(f"{column_name}_len_mean"),
+                    column_string.str.len_chars().min().alias(f"{column_name}_len_min"),
+                    column_string.str.len_chars().max().alias(f"{column_name}_len_max"),
                 ]
             )
 
@@ -102,23 +89,12 @@ def build_histogram_plans(lf: pl.LazyFrame) -> list[pl.LazyFrame]:
     schema = lf.collect_schema()
 
     for column_name, data_type in schema.items():
-        if data_type in (
-            pl.Int8,
-            pl.Int16,
-            pl.Int32,
-            pl.Int64,
-            pl.Float32,
-            pl.Float64,
-            pl.UInt8,
-            pl.UInt16,
-            pl.UInt32,
-            pl.UInt64,
-        ):
+        if data_type.is_numeric():
             # We fetch the raw column data (cast to Float64) instead of calculating
             # the histogram in the Lazy engine. This allows the core orchestrator
             # to execute .hist() in Eager mode, which guarantees that Polars returns
             # the full bin metadata (breakpoints/categories) necessary for plotting,
-            # rather than the optimized list of counts often returned by the Lazy engine.
+            # rather than the optimized list of counts returned by the Lazy engine.
             plan = lf.select(pl.col(column_name).cast(pl.Float64))
             plans.append(plan)
 
@@ -141,9 +117,8 @@ def build_top_k_plan(lf: pl.LazyFrame, k: int = 10) -> list[pl.LazyFrame]:
     schema = lf.collect_schema()
 
     for column_name, data_type in schema.items():
-        if data_type in (pl.String, pl.Categorical):
-            # Logic: GroupBy -> Count -> Sort -> Head(10)
-            # We explicitly cast to String to handle Categoricals safely
+        if data_type in (pl.String, pl.Categorical, pl.Enum):
+            # Logic: GroupBy -> Count -> Sort -> Head(k)
             plan = (
                 lf.select(pl.col(column_name).cast(pl.String).alias("value"))
                 .group_by("value")
