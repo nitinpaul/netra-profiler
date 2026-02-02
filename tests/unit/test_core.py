@@ -1,7 +1,7 @@
 import polars as pl
 import pytest
 
-from netra_profiler.core import Profiler
+from netra_profiler import Profiler
 
 
 @pytest.fixture
@@ -83,8 +83,17 @@ def test_profiler_basic_stats(sample_df: pl.DataFrame) -> None:
     assert isinstance(age_histogram, list)
     assert len(age_histogram) > 0
 
-    # Polars Histogram Struct keys: 'break_point', 'category', 'count'
-    # # The 'category' key holds the range string e.g. "(25, 30]"
+    # Polars Histogram Struct keys: 'breakpoint', 'category', 'count'
+    # The 'category' key holds the range string e.g. "(25, 30]"
     first_bin = age_histogram[0]
     assert "breakpoint" in first_bin
     assert "count" in first_bin
+
+    # 5. Verify Metadata
+    assert "_meta" in profile
+    meta = profile["_meta"]
+    assert "execution_time" in meta
+    assert meta["execution_time"] > 0
+    assert isinstance(meta["warnings"], list)
+    # We ensure our clean run has no warnings
+    assert len(meta["warnings"]) == 0

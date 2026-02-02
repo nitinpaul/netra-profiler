@@ -1,11 +1,10 @@
 import argparse
 import time
-from importlib.metadata import version
 from pathlib import Path
 
 import polars as pl
 
-from netra_profiler.core import Profiler
+from netra_profiler import Profiler, __version__
 
 
 def main() -> None:
@@ -37,15 +36,8 @@ def main() -> None:
     file_size_mb = file_size_bytes / (1024 * 1024)
     file_size_gb = file_size_bytes / (1024 * 1024 * 1024)
 
-    # We get the installed version dynamically
-    # If not installed, this might raise PackageNotFoundError, but it works in dev env.
-    try:
-        pkg_version = version("netra-profiler")
-    except Exception:
-        pkg_version = "unknown (dev)"
-
     print(f"Starting Benchmark on {data_file.name} ({file_size_mb:.2f} MB)")
-    print(f"   Netra-Profiler Version: v{pkg_version}")
+    print(f"   Netra-Profiler Version: v{__version__}")
 
     # 3. Smart Load (CSV vs Parquet)
     # We explicitly choose the right scanner based on extension
