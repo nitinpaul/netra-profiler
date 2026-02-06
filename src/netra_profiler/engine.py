@@ -134,3 +134,28 @@ def build_top_k_plan(lf: pl.LazyFrame, k: int = 10) -> list[pl.LazyFrame]:
             plans.append(plan)
 
     return plans
+
+
+def build_correlation_plan(lf: pl.LazyFrame) -> pl.LazyFrame:
+    """
+    PASS 4: Correlation Data Fetcher.
+
+    Identifies and selects all numeric columns.
+    This plan is intended to be collected (potentially with sampling)
+    by the core module to compute the correlation matrix.
+    """
+    # 1. Identify Numeric Columns
+    # We use the schema without scanning data
+    schema = lf.collect_schema()
+    numeric_columns = []
+
+    for column_name, data_type in schema.items():
+        if data_type.is_numeric():
+            numeric_columns.append(column_name)
+
+    # 2. Return a plan selecting only these columns
+    if not numeric_columns:
+        # Return an empty plan if no numeric columns exist
+        return pl.LazyFrame({})
+
+    return lf.select(numeric_columns)

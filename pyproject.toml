@@ -8,10 +8,11 @@ authors = [
     { name = "Nitin Paul", email = "nitinpaul.dev@gmail.com" }
 ]
 dependencies = [
-    "polars>=1.0.0",       # The engine
-    "jinja2>=3.1.0",       # Templating
-    "plotly>=5.0.0",       # Visualization
-    "pyarrow>=14.0.0",     # Required for Polars IO
+    "polars>=1.0.0", # The engine
+    "jinja2>=3.1.0", # Templating
+    "plotly>=5.0.0", # Visualization
+    "pyarrow>=14.0.0", # Required for Polars IO
+    "numpy>=2.2.6",
 ]
 
 [build-system]
