@@ -1,4 +1,5 @@
 import time
+import warnings
 from typing import Any
 
 import polars as pl
@@ -6,6 +7,7 @@ import polars as pl
 from netra_profiler import engine
 
 from . import __version__
+from .alerts import DiagnosticEngine
 
 CORRELATION_SAMPLE_SIZE = 100_000
 
@@ -45,6 +47,7 @@ class Profiler:
         2. Histograms (Distributions)
         3. Top-K (Frequent Items)
         4. Correlations (Pearson & Spearman)
+        5. Alerts (Diagnostics)
 
         Args:
             bins: Number of bins for histograms (default: 20)
@@ -55,7 +58,7 @@ class Profiler:
             a '_meta' key with execution details and warnings.
         """
         start_time = time.time()
-        warnings: list[str] = []
+        warnings_list: list[str] = []
 
         # PASS 1: Scalar Statistics (Foundation)
         profile = self._run_scalar_pass()
@@ -64,18 +67,21 @@ class Profiler:
         profile["_meta"] = {
             "timestamp": time.time(),
             "version": __version__,
-            "warnings": warnings,  # Reference to the local list we are appending to
+            "warnings": warnings_list,  # Reference to the local list we are appending to
             "correlation_method": None,
         }
 
         # PASS 2: Histograms
-        self._run_histogram_pass(profile, bins, warnings)
+        self._run_histogram_pass(profile, bins, warnings_list)
 
         # PASS 3: Top-K Values
-        self._run_top_k_pass(profile, top_k, warnings)
+        self._run_top_k_pass(profile, top_k, warnings_list)
 
         # PASS 4: Correlations
-        self._run_correlation_pass(profile, warnings)
+        self._run_correlation_pass(profile, warnings_list)
+
+        # PASS 5: Alerts (Diagnostics)
+        self._run_alerts_pass(profile, warnings_list)
 
         # Finalize Metadata
         profile["_meta"]["execution_time"] = round(time.time() - start_time, 4)
@@ -94,7 +100,9 @@ class Profiler:
 
         return profile
 
-    def _run_histogram_pass(self, profile: dict[str, Any], bins: int, warnings: list[str]) -> None:
+    def _run_histogram_pass(
+        self, profile: dict[str, Any], bins: int, warnings_list: list[str]
+    ) -> None:
         """Executes Pass 2: Histograms"""
         try:
             # 1. Build all plans
@@ -117,14 +125,16 @@ class Profiler:
                             histogram_df = eager_df[column_name].hist(bin_count=bins)
                             profile[f"{column_name}_histogram"] = histogram_df.to_dicts()
                         except Exception as e:
-                            warnings.append(
+                            warnings_list.append(
                                 f"Histogram generation failed for column '{column_name}': {e}"
                             )
 
         except Exception as e:
-            warnings.append(f"Histogram generation failed: {e}")
+            warnings_list.append(f"Histogram generation failed: {e}")
 
-    def _run_top_k_pass(self, profile: dict[str, Any], top_k: int, warnings: list[str]) -> None:
+    def _run_top_k_pass(
+        self, profile: dict[str, Any], top_k: int, warnings_list: list[str]
+    ) -> None:
         """Executes Pass 3: Top-K Values"""
         try:
             top_k_plans = engine.build_top_k_plan(self._df, k=top_k)
@@ -139,9 +149,9 @@ class Profiler:
                     profile[f"{column_name}_top_k"] = values
 
         except Exception as e:
-            warnings.append(f"Top-K generation failed: {e}")
+            warnings_list.append(f"Top-K generation failed: {e}")
 
-    def _run_correlation_pass(self, profile: dict[str, Any], warnings: list[str]) -> None:
+    def _run_correlation_pass(self, profile: dict[str, Any], warnings_list: list[str]) -> None:
         """Executes Pass 4: Correlations"""
         try:
             correlation_plan = engine.build_correlation_plan(self._df)
@@ -176,47 +186,72 @@ class Profiler:
                 if correlation_df.height > 0 and correlation_df.width > 1:
                     profile["correlations"] = {}
 
-                    # Compute PEARSON (Standard .corr())
-                    try:
-                        pearson_matrix = correlation_df.corr()
-                        columns = pearson_matrix.columns
+                    # We expect RuntimeWarnings (Divide by Zero) when correlating constant columns.
+                    # This is normal behavior for dirty data, so we suppress the log noise locally.
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore", RuntimeWarning)
 
-                        # Format: Add a 'column' column so we know which row is which variable
-                        # Output structure: [{'column': 'age', 'age': 1.0, 'income': 0.8}, ...]
-                        pearson_matrix = pearson_matrix.with_columns(
-                            pl.Series(name="column", values=columns)
-                        )
-                        # Reorder so that "column" appears first and
-                        # Clean NaNs (for JSON safety)
-                        pearson_matrix = pearson_matrix.select(
-                            pl.col("column"), pl.exclude("column").fill_nan(None)
-                        )
+                        # Compute PEARSON (Standard .corr())
+                        try:
+                            pearson_matrix = correlation_df.corr()
+                            columns = pearson_matrix.columns
 
-                        profile["correlations"]["pearson"] = pearson_matrix.to_dicts()
-                    except Exception as e:
-                        warnings.append(f"Correlation (pearson) failed: {e}")
+                            # Format: Add a 'column' column so we know which row is which variable
+                            # Output structure: [{'column': 'age', 'age': 1.0, 'income': 0.8}, ...]
+                            pearson_matrix = pearson_matrix.with_columns(
+                                pl.Series(name="column", values=columns)
+                            )
+                            # Reorder so that "column" appears first and
+                            # Clean NaNs (for JSON safety)
+                            pearson_matrix = pearson_matrix.select(
+                                pl.col("column"), pl.exclude("column").fill_nan(None)
+                            )
 
-                    # Compute SPEARMAN (Rank data -> .corr())
-                    try:
-                        # Spearman is just Pearson on the ranks
-                        spearman_matrix = correlation_df.select(pl.all().rank()).corr()
+                            profile["correlations"]["pearson"] = pearson_matrix.to_dicts()
+                        except Exception as e:
+                            warnings_list.append(f"Correlation (pearson) failed: {e}")
 
-                        columns = spearman_matrix.columns
+                        # Compute SPEARMAN (Rank data -> .corr())
+                        try:
+                            # Spearman is just Pearson on the ranks
+                            spearman_matrix = correlation_df.select(pl.all().rank()).corr()
 
-                        spearman_matrix = spearman_matrix.with_columns(
-                            pl.Series(name="column", values=columns)
-                        )
+                            columns = spearman_matrix.columns
 
-                        spearman_matrix = spearman_matrix.select(
-                            pl.col("column"), pl.exclude("column").fill_nan(None)
-                        )
+                            spearman_matrix = spearman_matrix.with_columns(
+                                pl.Series(name="column", values=columns)
+                            )
 
-                        profile["correlations"]["spearman"] = spearman_matrix.to_dicts()
-                    except Exception as e:
-                        warnings.append(f"Correlation (spearman) failed: {e}")
+                            spearman_matrix = spearman_matrix.select(
+                                pl.col("column"), pl.exclude("column").fill_nan(None)
+                            )
+
+                            profile["correlations"]["spearman"] = spearman_matrix.to_dicts()
+                        except Exception as e:
+                            warnings_list.append(f"Correlation (spearman) failed: {e}")
 
                 # Metadata Injection
                 profile["_meta"]["correlation_method"] = method_used
 
         except Exception as e:
-            warnings.append(f"Correlation generation failed: {e}")
+            warnings_list.append(f"Correlation generation failed: {e}")
+
+    def _run_alerts_pass(self, profile: dict[str, Any], warnings_list: list[str]) -> None:
+        """Executes Pass 5: Diagnostic Alerts"""
+        try:
+            engine = DiagnosticEngine(profile)
+            alerts = engine.run()
+
+            # Serialize alerts to dicts for JSON output
+            profile["alerts"] = [
+                {
+                    "column": a.column,
+                    "type": a.alert_type,
+                    "level": a.level.value,  # Convert Enum to string
+                    "message": a.message,
+                    "value": a.value,
+                }
+                for a in alerts
+            ]
+        except Exception as e:
+            warnings_list.append(f"Alert generation failed: {e}")

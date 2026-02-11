@@ -143,3 +143,10 @@ def test_metadata(profile_result: dict[str, Any]) -> None:
     assert meta["execution_time"] > 0
     assert isinstance(meta["warnings"], list)
     assert len(meta["warnings"]) == 0
+
+
+def test_alerts(profile_result: dict[str, Any]) -> None:
+    """Verifies that the diagnostic engine generates alerts."""
+    assert "alerts" in profile_result
+    alerts = profile_result["alerts"]
+    assert isinstance(alerts, list)
