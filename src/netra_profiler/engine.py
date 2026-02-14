@@ -159,3 +159,42 @@ def build_correlation_plan(lf: pl.LazyFrame) -> pl.LazyFrame:
         return pl.LazyFrame({})
 
     return lf.select(numeric_columns)
+
+
+def preprocess_complex_types(lf: pl.LazyFrame) -> pl.LazyFrame:
+    """
+    Transforms complex types (Structs, Lists, Arrays) into
+    profilable scalar columns.
+
+    Strategy:
+    1. Structs: Flattened into 'parent_child' columns.
+    2. Lists/Arrays: Converted to '_len' integer columns.
+    """
+    schema = lf.collect_schema()
+
+    # We will build a list of expressions to select/transform
+    expressions = []
+
+    for column_name, data_type in schema.items():
+        # 1. Handle Structs (Flattening)
+        if isinstance(data_type, pl.Struct):
+            # We explicitly alias fields to prevent naming collisions
+            # e.g. "user" -> "user_name", "user_age"
+            struct_fields = data_type.fields
+            for field in struct_fields:
+                expressions.append(
+                    pl.col(column_name)
+                    .struct.field(field.name)
+                    .alias(f"{column_name}_{field.name}")
+                )
+
+        # 2. Handle Lists & Arrays (Length Stats)
+        elif isinstance(data_type, (pl.List, pl.Array)):
+            # We replace the original column with length stats
+            expressions.append(pl.col(column_name).list.len().alias(f"{column_name}_len"))
+
+        # 3. Pass through everything else (Scalars)
+        else:
+            expressions.append(pl.col(column_name))
+
+    return lf.select(expressions)

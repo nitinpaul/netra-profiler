@@ -38,6 +38,11 @@ class Profiler:
         else:
             raise TypeError(f"Unsupported type: {type(df)}. Must be pl.DataFrame or pl.LazyFrame")
 
+        # OPTIMIZATION: Preprocess Complex Types (Structs/Lists)
+        # This "flattens" the data view for the engine, enabling
+        # support for nested JSON/Parquet without engine changes.
+        self._df = engine.preprocess_complex_types(self._df)
+
     def profile(self, bins: int = 20, top_k: int = 10) -> dict[str, Any]:
         """
         Executes the profiling plan and returns the results.
