@@ -13,6 +13,9 @@ dependencies = [
     "plotly>=5.0.0", # Visualization
     "pyarrow>=14.0.0", # Required for Polars IO
     "numpy>=2.2.6",
+    "typer>=0.24.0",
+    "rich>=14.3.1",
+    "psutil>=7.2.2",
 ]
 
 [build-system]
@@ -28,6 +31,9 @@ dev = [
     "memray>=1.11.0",      # Memory Profiler
     "viztracer>=0.16.0",   # Execution Profiler
 ]
+
+[project.scripts]
+netra = "netra_profiler.cli.main:app"
 
 # --- Tool Configuration ---
 

@@ -140,14 +140,17 @@ class DiagnosticEngine:
             and self.row_count > config.MIN_ROWS_FOR_ID_CHECK
             and n_unique > (self.row_count * config.ID_UNIQUENESS_THRESHOLD)
         ):
+            # HLL can overshoot slightly, leading to >100% distinctness which looks buggy.
+            # So we clamp the ratio for display to 100% max
+            display_ratio = min(n_unique / self.row_count, 1.0)
+
             self.alerts.append(
                 Alert(
                     column=column_name,
                     alert_type="ALL_DISTINCT",
                     level=AlertLevel.INFO,
                     message=(
-                        f"Column is {n_unique / self.row_count:.1%} distinct. "
-                        "Likely a Primary Key or ID."
+                        f"Column is {display_ratio:.1%} distinct. Likely a Primary Key or ID."
                     ),
                     value=n_unique,
                 )
