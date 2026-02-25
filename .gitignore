@@ -22,6 +22,10 @@ htmlcov/
 benchmarks/data/*.csv
 benchmarks/data/*.parquet
 
+# Test data
+tests/data/*.csv
+tests/data/*.parquet
+
 # Editors & IDEs
 .idea/
 .vscode/

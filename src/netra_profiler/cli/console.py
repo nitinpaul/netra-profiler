@@ -270,25 +270,81 @@ class NetraCLIRenderer:
 
         self._refresh()
 
-    # --- Phase 3: Results Dashboard ---
-    def render_results_dashboard(
-        self, profile: dict[str, Any], filename: str, duration: float
-    ) -> None:
-        """
-        Final UI State.
-        (Currently stubbed out. Will contain the rebuilt Health Checks and Variable Explorer).
-        """
-        grid = Table.grid(expand=True)
-        grid.add_row(" [muted]Compiling diagnostic reports...[/muted]")
+    def _render_data_health_card(self, alerts: list[dict[str, Any]]) -> Panel:
+        """Renders the prioritized list of dataset anomalies."""
 
-        placeholder_panel = Panel(
-            grid,
-            title="[not dim][brand]⊞[/brand] [value]Results Dashboard[/value][/]",
+        grid = Table.grid(padding=(1, 2))
+        grid.add_column(justify="center", vertical="top")  # Alert Level Label
+        grid.add_column(justify="left")  # Target Column + Diagnostic Message
+
+        summary_text = None
+
+        if not alerts:
+            grid.add_row(
+                "[bold black on #8FBC8F] HEALTHY  [/]",
+                "[value]Dataset is healthy. No anomalies detected.[/value]",
+            )
+        else:
+            crit_count = sum(1 for a in alerts if a["level"] == "CRITICAL")
+            warn_count = sum(1 for a in alerts if a["level"] == "WARNING")
+
+            if crit_count > 0 or warn_count > 0:
+                parts = []
+                if crit_count > 0:
+                    parts.append(f"[bold #8C0000]{crit_count} CRITICAL[/]")
+                if warn_count > 0:
+                    s = "S" if warn_count > 1 else ""
+                    parts.append(f"[bold #997602]{warn_count} WARNING{s}[/]")
+
+                summary_text = (
+                    f"[muted] Data Issues found: \\[[/muted]{', '.join(parts)}[muted]][/muted]"
+                )
+
+            # Sort alerts by severity: Critical (0) -> Warning (1) -> Info (2)
+            alert_level_ranks = {"CRITICAL": 0, "WARNING": 1, "INFO": 2}
+            sorted_alerts = sorted(alerts, key=lambda x: alert_level_ranks.get(x["level"], 3))
+
+            for alert in sorted_alerts:
+                lvl = alert["level"]
+                col = alert["column"]
+                msg = alert["message"]
+
+                if lvl == "CRITICAL":
+                    badge = " [bold black on #8C0000][ CRITICAL ][/]"
+                elif lvl == "WARNING":
+                    badge = " [bold black on #997602][ WARNING  ][/]"
+                else:
+                    badge = " [bold black on #737373][   INFO   ][/]"
+
+                # We stack the column name and the message using a newline
+                alert_details = f"[brand]{col}[/brand]\n[muted]└─ {msg}[/muted]"
+
+                grid.add_row(badge, alert_details)
+
+        panel_content = Group(summary_text, "", grid) if summary_text else grid
+
+        return Panel(
+            panel_content,
+            title="[not dim][#FF004D]✚[/] [value]Data Health[/value][/]",
             title_align="left",
             border_style="border.section",
             box=box.ROUNDED,
             padding=(1, 1),
         )
 
-        self._results_dashboard = Group(placeholder_panel)
+    # --- Phase 3: Results Dashboard ---
+    def render_results_dashboard(
+        self, profile: dict[str, Any], filename: str, duration: float
+    ) -> None:
+        """
+        Final UI State.
+        """
+        # 1. Extract the alerts from the profile payload
+        alerts = profile.get("alerts", [])
+
+        # 2. Render the components
+        data_health_card = self._render_data_health_card(alerts)
+
+        # 3. Stack the final dashboard
+        self._results_dashboard = Group(data_health_card)
         self._refresh()
