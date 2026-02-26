@@ -112,8 +112,8 @@ def profile(
         try:
             df, _ = _scan_file(path)
             profiler = Profiler(df)
-            result = profiler.profile(bins=bins, top_k=top_k)
-            print(json.dumps(result, default=str))
+            profile = profiler.profile(bins=bins, top_k=top_k)
+            print(json.dumps(profile, default=str))
         except Exception as e:
             # Output error as JSON for machine parsing
             print(json.dumps({"error": str(e)}))
@@ -124,7 +124,7 @@ def profile(
 
     with NetraCLIRenderer() as ui:
         if not path.exists():
-            ui.start_data_source_connection(path.name)
+            ui.render_data_source_spinner(path.name)
             ui.render_fatal_error(
                 step="data_source",
                 message="File not found on disk.",
@@ -135,7 +135,7 @@ def profile(
         # --- Phase 1: Data Source Connection ---
         try:
             # We pass str(path) so it shows the relative path in the UI
-            ui.start_data_source_connection(path.name)
+            ui.render_data_source_spinner(path.name)
 
             # Logic: Scan and Detect
             load_start = time.time()
@@ -151,7 +151,7 @@ def profile(
 
             file_info = {"path": str(path), "size": _format_bytes(file_size), "type": file_type}
 
-            ui.finish_data_source_connection(
+            ui.render_data_source_card(
                 file_info=file_info,
                 schema_info=schema_info,
                 columns=len(schema),
@@ -169,7 +169,7 @@ def profile(
 
         # --- Phase 2: Data Profiling & Engine Telemetry ---
         try:
-            progress = ui.start_data_profiling()
+            progress = ui.render_engine_status_card()
             engine_messages = [
                 "Resolving lazy execution graph...",
                 "Allocating zero-copy memory buffers...",
@@ -182,17 +182,16 @@ def profile(
             active_message = random.choice(engine_messages)
             progress.add_task(active_message, total=None)
 
-            profiling_start_time = time.time()
             profiler = Profiler(df)
-            result = profiler.profile(bins=bins, top_k=top_k)
+            profile = profiler.profile(bins=bins, top_k=top_k)
 
-            execution_time = time.time() - profiling_start_time
+            engine_time = profile.get("_meta", {}).get("engine_time", 0.0)
             peak_ram_usage = _get_peak_ram_usage_in_mb()
 
-            throughput = (file_size / execution_time) / (1024**3) if execution_time > 0 else 0.0
+            throughput = (file_size / engine_time) / (1024**3) if engine_time > 0 else 0.0
 
-            ui.finish_data_profiling(
-                execution_time=execution_time,
+            ui.render_engine_telemetry_card(
+                engine_time=engine_time,
                 throughput_gb_s=throughput,
                 peak_ram_usage=peak_ram_usage,
             )
@@ -206,7 +205,7 @@ def profile(
             raise typer.Exit(code=1) from None
 
         # --- Phase 3: Results Dashboard ---
-        ui.render_results_dashboard(result, path.name, execution_time)
+        ui.render_profiling_results(profile)
 
 
 @app.command()

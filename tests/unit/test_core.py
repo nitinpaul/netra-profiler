@@ -73,9 +73,9 @@ def test_string_stats(profile_result: dict[str, Any], sample_df: pl.DataFrame) -
     # String Lengths
     # Groningen (9), Thrissur (8), Delhi (5)
     city_lengths = sample_df["city"].str.len_chars()
-    assert profile_result["city_len_min"] == city_lengths.min()  # 5 (Delhi)
-    assert profile_result["city_len_max"] == city_lengths.max()  # 9 (Groningen)
-    assert profile_result["city_len_mean"] == pytest.approx(city_lengths.mean())
+    assert profile_result["city_min_length"] == city_lengths.min()  # 5 (Delhi)
+    assert profile_result["city_max_length"] == city_lengths.max()  # 9 (Groningen)
+    assert profile_result["city_mean_length"] == pytest.approx(city_lengths.mean())
 
 
 def test_top_k_stats(profile_result: dict[str, Any], sample_df: pl.DataFrame) -> None:
@@ -139,8 +139,8 @@ def test_metadata(profile_result: dict[str, Any]) -> None:
     assert "_meta" in profile_result
     meta = profile_result["_meta"]
 
-    assert "execution_time" in meta
-    assert meta["execution_time"] > 0
+    assert "engine_time" in meta
+    assert meta["engine_time"] > 0
     assert isinstance(meta["warnings"], list)
     assert len(meta["warnings"]) == 0
 

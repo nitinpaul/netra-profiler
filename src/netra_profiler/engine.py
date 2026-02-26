@@ -28,9 +28,7 @@ def build_scalar_plan(lf: pl.LazyFrame) -> pl.LazyFrame:
         expressions.extend(
             [
                 pl.col(column_name).null_count().alias(f"{column_name}_null_count"),
-                # Exact `n_unique` is expensive (requires sorting/hashing).
-                # approx_n_unique uses HyperLogLog++, which is O(1) memory and streaming-friendly.
-                pl.col(column_name).approx_n_unique().alias(f"{column_name}_n_unique"),
+                pl.col(column_name).n_unique().alias(f"{column_name}_n_unique"),
             ]
         )
 
@@ -63,9 +61,9 @@ def build_scalar_plan(lf: pl.LazyFrame) -> pl.LazyFrame:
                     column_string.min().alias(f"{column_name}_min"),
                     column_string.max().alias(f"{column_name}_max"),
                     # 2. Length stats
-                    column_string.str.len_chars().mean().alias(f"{column_name}_len_mean"),
-                    column_string.str.len_chars().min().alias(f"{column_name}_len_min"),
-                    column_string.str.len_chars().max().alias(f"{column_name}_len_max"),
+                    column_string.str.len_chars().mean().alias(f"{column_name}_mean_length"),
+                    column_string.str.len_chars().min().alias(f"{column_name}_min_length"),
+                    column_string.str.len_chars().max().alias(f"{column_name}_max_length"),
                 ]
             )
 

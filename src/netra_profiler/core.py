@@ -89,7 +89,7 @@ class Profiler:
         self._run_alerts_pass(profile, warnings_list)
 
         # Finalize Metadata
-        profile["_meta"]["execution_time"] = round(time.time() - start_time, 4)
+        profile["_meta"]["engine_time"] = round(time.time() - start_time, 4)
 
         return profile
 
