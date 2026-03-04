@@ -24,11 +24,21 @@ def build_scalar_plan(lf: pl.LazyFrame) -> pl.LazyFrame:
     # We iterate over the schema to decide what stats to compute for each type.
     schema = lf.collect_schema()
     for column_name, data_type in schema.items():
+        # Add column data type to the profile
+        expressions.append(pl.lit(str(data_type)).alias(f"{column_name}_data_type"))
+
+        # We handle NaN for Float columns before doing Null counts
+        if data_type in (pl.Float32, pl.Float64):
+            # Convert NaNs to true Nulls for accurate counting and math
+            column = pl.col(column_name).fill_nan(None)
+        else:
+            column = pl.col(column_name)
+
         # Universal Stats (All Columns)
         expressions.extend(
             [
-                pl.col(column_name).null_count().alias(f"{column_name}_null_count"),
-                pl.col(column_name).n_unique().alias(f"{column_name}_n_unique"),
+                column.null_count().alias(f"{column_name}_null_count"),
+                column.n_unique().alias(f"{column_name}_n_unique"),
             ]
         )
 
@@ -36,34 +46,35 @@ def build_scalar_plan(lf: pl.LazyFrame) -> pl.LazyFrame:
         if data_type.is_numeric():
             expressions.extend(
                 [
-                    # Basic
-                    pl.col(column_name).mean().alias(f"{column_name}_mean"),
-                    pl.col(column_name).min().alias(f"{column_name}_min"),
-                    pl.col(column_name).max().alias(f"{column_name}_max"),
+                    # Basic Stats
+                    column.mean().alias(f"{column_name}_mean"),
+                    column.min().alias(f"{column_name}_min"),
+                    column.max().alias(f"{column_name}_max"),
                     # Distribution Stats
-                    pl.col(column_name).std().alias(f"{column_name}_std"),
-                    pl.col(column_name).skew().alias(f"{column_name}_skew"),
-                    pl.col(column_name).kurtosis().alias(f"{column_name}_kurtosis"),
+                    column.std().alias(f"{column_name}_std"),
+                    column.skew().alias(f"{column_name}_skew"),
+                    column.kurtosis().alias(f"{column_name}_kurtosis"),
                     # Quantiles (Percentiles)
-                    pl.col(column_name).quantile(0.25).alias(f"{column_name}_p25"),
-                    pl.col(column_name).median().alias(f"{column_name}_p50"),
-                    pl.col(column_name).quantile(0.75).alias(f"{column_name}_p75"),
+                    column.quantile(0.25).alias(f"{column_name}_p25"),
+                    column.median().alias(f"{column_name}_p50"),
+                    column.quantile(0.75).alias(f"{column_name}_p75"),
                 ]
             )
 
         # String/Categorical Stats
         elif data_type in (pl.String, pl.Categorical, pl.Enum):
-            # We create a string-expression for the column (DRY)
-            column_string = pl.col(column_name).cast(pl.String)
+            # We cast column to String for .str operations
+            column = pl.col(column_name).cast(pl.String)
+
             expressions.extend(
                 [
                     # 1. Lexicographical stats (First/Last alphabetical value)
-                    column_string.min().alias(f"{column_name}_min"),
-                    column_string.max().alias(f"{column_name}_max"),
+                    column.min().alias(f"{column_name}_min"),
+                    column.max().alias(f"{column_name}_max"),
                     # 2. Length stats
-                    column_string.str.len_chars().mean().alias(f"{column_name}_mean_length"),
-                    column_string.str.len_chars().min().alias(f"{column_name}_min_length"),
-                    column_string.str.len_chars().max().alias(f"{column_name}_max_length"),
+                    column.str.len_chars().mean().alias(f"{column_name}_mean_length"),
+                    column.str.len_chars().min().alias(f"{column_name}_min_length"),
+                    column.str.len_chars().max().alias(f"{column_name}_max_length"),
                 ]
             )
 

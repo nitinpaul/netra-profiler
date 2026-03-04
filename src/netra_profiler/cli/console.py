@@ -40,18 +40,18 @@ class NetraCLIRenderer:
 
     def __init__(self) -> None:
         # UI State Components
-        # We track the active file to dynamically update the main outer border
+
         self._data_source_name: str | None = None
 
-        # Phase 1: The Data Source Connection Card
-        self._data_source_card: Panel | None = None
+        # Phase 1: The Data Source Connection Panel
+        self._data_source_panel: Panel | None = None
 
-        # Phase 2: The Engine Status & Telemetry Card
+        # Phase 2: The Engine Progress, Status & Telemetry Panels
         self._engine_progress_bar: Progress | None = None
-        self._engine_status_card: Panel | None = None
-        self._engine_telemetry_card: Panel | None = None
+        self._engine_status_panel: Panel | None = None
+        self._engine_telemetry_panel: Panel | None = None
 
-        # Phase 3: The Final Results Group (Health + Variables)
+        # Phase 3: The Profiling Results Panels (Health + Variables)
         self._profiling_results: Group | None = None
 
         # The Live Context
@@ -69,13 +69,13 @@ class NetraCLIRenderer:
         """
         active_cards: list[RenderableType] = []
 
-        if self._data_source_card:
-            active_cards.append(self._data_source_card)
+        if self._data_source_panel:
+            active_cards.append(self._data_source_panel)
 
-        if self._engine_status_card:
-            active_cards.append(self._engine_status_card)
-        if self._engine_telemetry_card:
-            active_cards.append(self._engine_telemetry_card)
+        if self._engine_status_panel:
+            active_cards.append(self._engine_status_panel)
+        if self._engine_telemetry_panel:
+            active_cards.append(self._engine_telemetry_panel)
 
         if self._profiling_results:
             active_cards.append(self._profiling_results)
@@ -117,7 +117,6 @@ class NetraCLIRenderer:
     def render_fatal_error(self, step: str, message: str, hint: str = "") -> None:
         """
         Renders a semantic red error card and halts the visual progression.
-        Slots the error into the position of whichever card failed.
 
         step: "data_source" or "profiling"
         """
@@ -140,11 +139,11 @@ class NetraCLIRenderer:
             padding=(1, 1),
         )
 
-        # Slot the error into the correct active card
+        # Slot the error into the correct panel
         if step == "data_source":
-            self._data_source_card = error_panel
+            self._data_source_panel = error_panel
         elif step == "profiling":
-            self._engine_telemetry_card = error_panel
+            self._engine_telemetry_panel = error_panel
 
         self._refresh()
 
@@ -165,7 +164,7 @@ class NetraCLIRenderer:
 
         grid.add_row(aligned_spinner)
 
-        self._data_source_card = Panel(
+        self._data_source_panel = Panel(
             grid,
             title="[not dim][success]⛁[/success] [value]Data Source[/value][/]",
             title_align="left",
@@ -175,7 +174,7 @@ class NetraCLIRenderer:
         )
         self._refresh()
 
-    def render_data_source_card(
+    def render_data_source_panel(
         self,
         file_info: dict[str, str],
         schema_info: str,
@@ -206,7 +205,7 @@ class NetraCLIRenderer:
         grid.add_row(f" └─ Size:    {file_size}")
         grid.add_row(f" └─ Schema:  {columns} Columns ({schema_info})")
 
-        self._data_source_card = Panel(
+        self._data_source_panel = Panel(
             grid,
             title="[not dim][success]⛁[/success] [value]Data Source[/value][/]",
             title_align="left",
@@ -218,8 +217,8 @@ class NetraCLIRenderer:
 
     # --- Phase 2: Data Profiling & Engine Telemetry ---
 
-    def render_engine_status_card(self) -> Progress:
-        """Initializes the indeterminate 'Cylon scanner' progress bar for the engine."""
+    def render_engine_status_panel(self) -> Progress:
+        """Initializes the progress bar state for the profiling operation."""
         self._engine_progress_bar = Progress(
             SpinnerColumn(style="brand"),
             TextColumn("[brand]{task.description}"),
@@ -229,7 +228,7 @@ class NetraCLIRenderer:
             expand=True,
         )
 
-        self._engine_status_card = Panel(
+        self._engine_status_panel = Panel(
             self._engine_progress_bar,
             title="[not dim][#FFDF00]⚙[/#FFDF00] [value]Engine Status[/value][/]",
             title_align="left",
@@ -240,7 +239,7 @@ class NetraCLIRenderer:
         self._refresh()
         return self._engine_progress_bar
 
-    def render_engine_telemetry_card(
+    def render_engine_telemetry_panel(
         self, engine_time: float, throughput_gb_s: float, peak_ram_usage: float
     ) -> None:
         """Morphs the active engine status into a permanent hardware telemetry card."""
@@ -258,7 +257,7 @@ class NetraCLIRenderer:
             "[muted](Includes Arrow allocation & compute buffers)[/muted]"
         )
 
-        self._engine_telemetry_card = Panel(
+        self._engine_telemetry_panel = Panel(
             grid,
             title="[not dim][#FFDF00]⏣[/#FFDF00] [value]Engine Telemetry[/value][/]",
             title_align="left",
@@ -267,14 +266,14 @@ class NetraCLIRenderer:
             padding=(1, 1),
         )
         # We disable the active status card so the telemetry card takes its place
-        self._engine_status_card = None
+        self._engine_status_panel = None
         self._engine_progress_bar = None
 
         self._refresh()
 
     # --- Phase 3: Profiling Results ---
 
-    def _render_data_health_card(self, alerts: list[dict[str, Any]], row_count: int) -> Panel:
+    def _render_data_health_panel(self, alerts: list[dict[str, Any]], row_count: int) -> Panel:
         """Renders the prioritized list of dataset anomalies, anchored by the row count."""
 
         grid = Table.grid(padding=(1, 2))
@@ -286,7 +285,7 @@ class NetraCLIRenderer:
 
         if not alerts:
             grid.add_row(
-                " [bold black on green][ HEALTHY ][/]",
+                " [bold #000000 on green][ HEALTHY ][/]",
                 "[value]Dataset is healthy. No anomalies detected.[/value]",
             )
         else:
@@ -317,11 +316,11 @@ class NetraCLIRenderer:
                 alert_message = alert["message"]
 
                 if alert_level == "CRITICAL":
-                    badge = " [bold black on #8C0000][ CRITICAL ][/]"
+                    badge = " [bold #000000 on #8C0000][ CRITICAL ][/]"
                 elif alert_level == "WARNING":
-                    badge = " [bold black on #997602][ WARNING  ][/]"
+                    badge = " [bold #000000 on #997602][ WARNING  ][/]"
                 else:
-                    badge = " [bold black on #737373][   INFO   ][/]"
+                    badge = " [bold #000000 on #737373][   INFO   ][/]"
 
                 # We stack the column name and the message using a newline
                 alert_details = f"[brand]{alert_column}[/brand]\n[muted]└─ {alert_message}[/muted]"
@@ -361,6 +360,7 @@ class NetraCLIRenderer:
             base_metrics = {
                 "null_count": profile.get(f"{column}_null_count", 0),
                 "n_unique": profile.get(f"{column}_n_unique", 0),
+                "data_type": profile.get(f"{column}_data_type", "Unknown"),
             }
 
             # Type Inference: If it has a mean, it's definitively Numeric
@@ -479,21 +479,24 @@ class NetraCLIRenderer:
         table.add_column("Max", justify="right", style="value")
         table.add_column("Distribution", justify="left")
 
-        for column, data in numerics.items():
+        for column, column_profile in numerics.items():
+            column_name_display_string = (
+                f"{column} [muted]\\[{column_profile.get('data_type', '')}][/muted]"
+            )
             null_percentage_string = self._format_null_percentage(
-                data.get("null_count", 0), row_count
+                column_profile.get("null_count", 0), row_count
             )
 
-            distinct_string = f"{data.get('n_unique', 0):,}"
+            distinct_string = f"{column_profile.get('n_unique', 0):,}"
 
-            min_value = self._format_number(data.get("min"))
-            mean_value = self._format_number(data.get("mean"))
-            max_value = self._format_number(data.get("max"))
+            min_value = self._format_number(column_profile.get("min"))
+            mean_value = self._format_number(column_profile.get("mean"))
+            max_value = self._format_number(column_profile.get("max"))
 
-            sparkline = self._build_sparkline(data.get("histogram", []))
+            sparkline = self._build_sparkline(column_profile.get("histogram", []))
 
             table.add_row(
-                column,
+                column_name_display_string,
                 null_percentage_string,
                 distinct_string,
                 min_value,
@@ -520,16 +523,20 @@ class NetraCLIRenderer:
         table.add_column("Lengths (Min/Avg/Max)", justify="center", style="value")
         table.add_column("Top Values", justify="left")
 
-        for column, data in categoricals.items():
-            null_percentage_string = self._format_null_percentage(
-                data.get("null_count", 0), row_count
+        for column, column_profile in categoricals.items():
+            column_name_display_string = (
+                f"{column} [muted]\\[{column_profile.get('data_type', '')}][/muted]"
             )
 
-            distinct_str = f"{data.get('n_unique', 0):,}"
+            null_percentage_string = self._format_null_percentage(
+                column_profile.get("null_count", 0), row_count
+            )
 
-            min_length = data.get("min_length")
-            mean_length = data.get("mean_length")
-            max_length = data.get("max_length")
+            distinct_string = f"{column_profile.get('n_unique', 0):,}"
+
+            min_length = column_profile.get("min_length")
+            mean_length = column_profile.get("mean_length")
+            max_length = column_profile.get("max_length")
 
             if min_length is not None and mean_length is not None and max_length is not None:
                 lengths_str = f"{min_length} / {mean_length:.1f} / {max_length}"
@@ -537,9 +544,15 @@ class NetraCLIRenderer:
                 lengths_str = "-"
 
             # Generate Top-K String
-            top_k_str = self._build_top_k_string(data.get("top_k", []), row_count)
+            top_k_str = self._build_top_k_string(column_profile.get("top_k", []), row_count)
 
-            table.add_row(column, null_percentage_string, distinct_str, lengths_str, top_k_str)
+            table.add_row(
+                column_name_display_string,
+                null_percentage_string,
+                distinct_string,
+                lengths_str,
+                top_k_str,
+            )
 
         return table
 
@@ -597,7 +610,7 @@ class NetraCLIRenderer:
         alerts = profile.get("alerts", [])
         numerics, categoricals = self._group_column_metrics(profile)
 
-        health_card = self._render_data_health_card(alerts, row_count)
+        health_card = self._render_data_health_panel(alerts, row_count)
         variable_explorer_card = self._build_variable_explorer_panel(
             numerics, categoricals, row_count
         )

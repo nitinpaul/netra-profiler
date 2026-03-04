@@ -151,7 +151,7 @@ def profile(
 
             file_info = {"path": str(path), "size": _format_bytes(file_size), "type": file_type}
 
-            ui.render_data_source_card(
+            ui.render_data_source_panel(
                 file_info=file_info,
                 schema_info=schema_info,
                 columns=len(schema),
@@ -169,7 +169,7 @@ def profile(
 
         # --- Phase 2: Data Profiling & Engine Telemetry ---
         try:
-            progress = ui.render_engine_status_card()
+            progress = ui.render_engine_status_panel()
             engine_messages = [
                 "Resolving lazy execution graph...",
                 "Allocating zero-copy memory buffers...",
@@ -190,7 +190,7 @@ def profile(
 
             throughput = (file_size / engine_time) / (1024**3) if engine_time > 0 else 0.0
 
-            ui.render_engine_telemetry_card(
+            ui.render_engine_telemetry_panel(
                 engine_time=engine_time,
                 throughput_gb_s=throughput,
                 peak_ram_usage=peak_ram_usage,
