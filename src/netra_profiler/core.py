@@ -94,7 +94,7 @@ class Profiler:
         return profile
 
     def _run_scalar_pass(self) -> dict[str, Any]:
-        """Executes Pass 1: Scalar Statistics."""
+        """Executes Pass 1: Scalar Statistics (Streaming Mode)"""
         try:
             scalar_plan = engine.build_scalar_plan(self._df)
             scalar_df = scalar_plan.collect(engine="streaming")
@@ -146,7 +146,7 @@ class Profiler:
 
             for plan in top_k_plans:
                 # We collect each column individually to keep memory usage low
-                df = plan.collect()
+                df = plan.collect(engine="streaming")
 
                 if df.height > 0:
                     column_name = df["column_name"][0]

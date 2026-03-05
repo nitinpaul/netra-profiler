@@ -103,7 +103,7 @@ def build_histogram_plans(lf: pl.LazyFrame) -> list[pl.LazyFrame]:
             # the histogram in the Lazy engine. This allows the core orchestrator
             # to execute .hist() in Eager mode, which guarantees that Polars returns
             # the full bin metadata (breakpoints/categories) necessary for plotting,
-            # rather than the optimized list of counts returned by the Lazy engine.
+            # rather than the list of counts returned by the Lazy engine.
             plan = lf.select(pl.col(column_name).cast(pl.Float64))
             plans.append(plan)
 
