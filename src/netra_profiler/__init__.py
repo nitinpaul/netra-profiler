@@ -8,6 +8,6 @@ except metadata.PackageNotFoundError:
 
 # This allows users to do: "from netra_profiler import Profiler"
 # instead of "from netra_profiler.core import Profiler"
-from .core import Profiler
+from .profiler import Profiler
 
 __all__ = ["Profiler", "__version__"]

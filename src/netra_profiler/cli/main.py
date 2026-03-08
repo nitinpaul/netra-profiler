@@ -11,9 +11,8 @@ import polars as pl
 import psutil
 import typer
 
-from netra_profiler import __version__
+from netra_profiler import Profiler, __version__
 from netra_profiler.cli.console import NetraCLIRenderer, console
-from netra_profiler.core import Profiler
 
 
 def _get_peak_ram_usage_in_mb() -> float:

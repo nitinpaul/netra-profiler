@@ -7,14 +7,14 @@ import polars as pl
 from netra_profiler import engine
 
 from . import __version__
-from .alerts import DiagnosticEngine
+from .diagnostics import DiagnosticEngine
 
 CORRELATION_SAMPLE_SIZE = 100_000
 
 
 class Profiler:
     """
-    The main entry point for Netra-Profiler
+    The main entry point for Netra Profiler
 
     This class manages the lifecycle of a profiling session:
         1. Ingestion (DataFrame -> LazyFrame)
@@ -38,7 +38,7 @@ class Profiler:
         else:
             raise TypeError(f"Unsupported type: {type(df)}. Must be pl.DataFrame or pl.LazyFrame")
 
-        # OPTIMIZATION: Preprocess Complex Types (Structs/Lists)
+        # Preprocess Complex Types (Structs/Lists)
         # This "flattens" the data view for the engine, enabling
         # support for nested JSON/Parquet without engine changes.
         self._df = engine.preprocess_complex_types(self._df)
@@ -62,8 +62,8 @@ class Profiler:
             A dictionary containing the combined statistics and
             a '_meta' key with execution details and warnings.
         """
-        start_time = time.time()
-        warnings_list: list[str] = []
+        profiling_start_time = time.time()
+        profiler_warnings: list[str] = []
 
         # PASS 1: Scalar Statistics (Foundation)
         profile = self._run_scalar_pass()
@@ -72,24 +72,24 @@ class Profiler:
         profile["_meta"] = {
             "timestamp": time.time(),
             "version": __version__,
-            "warnings": warnings_list,  # Reference to the local list we are appending to
+            "warnings": profiler_warnings,  # Reference to the local list we are appending to
             "correlation_method": None,
         }
 
         # PASS 2: Histograms
-        self._run_histogram_pass(profile, bins, warnings_list)
+        self._run_histogram_pass(profile, bins, profiler_warnings)
 
         # PASS 3: Top-K Values
-        self._run_top_k_pass(profile, top_k, warnings_list)
+        self._run_top_k_pass(profile, top_k, profiler_warnings)
 
         # PASS 4: Correlations
-        self._run_correlation_pass(profile, warnings_list)
+        self._run_correlation_pass(profile, profiler_warnings)
 
-        # PASS 5: Alerts (Diagnostics)
-        self._run_alerts_pass(profile, warnings_list)
+        # PASS 5: Diagnostics
+        self._run_diagnostics_pass(profile, profiler_warnings)
 
         # Finalize Metadata
-        profile["_meta"]["engine_time"] = round(time.time() - start_time, 4)
+        profile["_meta"]["engine_time"] = round(time.time() - profiling_start_time, 4)
 
         return profile
 
@@ -100,13 +100,13 @@ class Profiler:
             scalar_df = scalar_plan.collect(engine="streaming")
             profile = scalar_df.rows(named=True)[0]
         except Exception as e:
-            # If Pass 1 fails, we can't really do anything.
+            # If Pass 1 fails, we can't really do anything (gg).
             raise RuntimeError(f"Critical Error: {e}") from e
 
         return profile
 
     def _run_histogram_pass(
-        self, profile: dict[str, Any], bins: int, warnings_list: list[str]
+        self, profile: dict[str, Any], bins: int, profiler_warnings: list[str]
     ) -> None:
         """Executes Pass 2: Histograms"""
         try:
@@ -117,46 +117,75 @@ class Profiler:
                 # 2. PARALLEL EXECUTION
                 # collect_all() runs all lazy plans in parallel threads.
                 # This saturates I/O and CPU much better than a Python loop.
-                eager_dfs = pl.collect_all(histogram_plans)
+                histogram_eager_dfs = pl.collect_all(histogram_plans)
 
                 # 3. Process results in memory (Fast)
-                for eager_df in eager_dfs:
-                    if eager_df.height > 0:
-                        column_name = eager_df.columns[0]
+                for histogram_eager_df in histogram_eager_dfs:
+                    if histogram_eager_df.height > 0:
+                        column_name = histogram_eager_df.columns[0]
                         try:
-                            # Eager hist() ensures struct output
-                            # It returns a DataFrame with columns:
-                            # 'break_point', 'category', 'count'
-                            histogram_df = eager_df[column_name].hist(bin_count=bins)
+                            # We re-use the min-max values computed in Pass 1
+                            # to calculate the bin edges
+                            min_value = profile.get(f"{column_name}_min")
+                            max_value = profile.get(f"{column_name}_max")
+
+                            if (
+                                min_value is not None
+                                and max_value is not None
+                                and min_value < max_value
+                            ):
+                                step = (max_value - min_value) / bins
+                                # Calculate edges terminating at max_val to avoid float drift
+                                edges = [min_value + (step * i) for i in range(bins)]
+                                edges.append(max_value)
+
+                                # Eager hist() ensures struct output
+                                # It returns a DataFrame with columns:
+                                # 'break_point', 'category', 'count'
+                                # We rename 'category' to 'bin' for semantic clarity
+                                histogram_df = (
+                                    histogram_eager_df[column_name]
+                                    .hist(bins=edges)
+                                    .rename({"category": "bin"})
+                                )
+                            else:
+                                # Fallback for constant columns (min == max)
+                                histogram_df = (
+                                    histogram_eager_df[column_name]
+                                    .hist(bin_count=bins)
+                                    .rename({"category": "bin"})
+                                )
+
                             profile[f"{column_name}_histogram"] = histogram_df.to_dicts()
                         except Exception as e:
-                            warnings_list.append(
+                            profiler_warnings.append(
                                 f"Histogram generation failed for column '{column_name}': {e}"
                             )
 
         except Exception as e:
-            warnings_list.append(f"Histogram generation failed: {e}")
+            profiler_warnings.append(f"Histogram generation failed: {e}")
 
     def _run_top_k_pass(
-        self, profile: dict[str, Any], top_k: int, warnings_list: list[str]
+        self, profile: dict[str, Any], top_k: int, profiler_warnings: list[str]
     ) -> None:
         """Executes Pass 3: Top-K Values"""
         try:
             top_k_plans = engine.build_top_k_plan(self._df, k=top_k)
 
-            for plan in top_k_plans:
-                # We collect each column individually to keep memory usage low
-                df = plan.collect(engine="streaming")
+            if top_k_plans:
+                # We execute all columns in parallel using the streaming engine
+                top_k_dfs = pl.collect_all(top_k_plans, engine="streaming")
 
-                if df.height > 0:
-                    column_name = df["column_name"][0]
-                    values = df.select("value", "count").to_dicts()
-                    profile[f"{column_name}_top_k"] = values
+                for top_k_df in top_k_dfs:
+                    if top_k_df.height > 0:
+                        column_name = top_k_df["column_name"][0]
+                        top_k_values = top_k_df.select("value", "count").to_dicts()
+                        profile[f"{column_name}_top_k"] = top_k_values
 
         except Exception as e:
-            warnings_list.append(f"Top-K generation failed: {e}")
+            profiler_warnings.append(f"Top-K generation failed: {e}")
 
-    def _run_correlation_pass(self, profile: dict[str, Any], warnings_list: list[str]) -> None:
+    def _run_correlation_pass(self, profile: dict[str, Any], profiler_warnings: list[str]) -> None:
         """Executes Pass 4: Correlations"""
         try:
             correlation_plan = engine.build_correlation_plan(self._df)
@@ -172,19 +201,25 @@ class Profiler:
                 # Fetch Data (Sampled or Full)
                 if row_count > CORRELATION_SAMPLE_SIZE:
                     # Case 1: Big Data -> Sample
-                    # We cast to Float64 to handle potential integer overflow
+                    # We use Systematic Sampling
+                    step_size = max(1, row_count // CORRELATION_SAMPLE_SIZE)
+
                     correlation_df = (
+                        # We cast to Float64 to handle potential integer overflow
                         correlation_plan.select(pl.all().cast(pl.Float64))
+                        # gather_every() only uses every step_size row in the dataset
+                        # which is more robust than using head or tail and closest to
+                        # random sampling in streaming mode. High disk I/O, low RAM usage
+                        .gather_every(step_size)
                         .collect()
-                        .sample(n=CORRELATION_SAMPLE_SIZE, with_replacement=False, shuffle=True)
                     )
-                    method_used = f"sampled (n={CORRELATION_SAMPLE_SIZE})"
+                    method_used = f"systematic_sample (~{CORRELATION_SAMPLE_SIZE})"
                 else:
                     # Case 2: Small Data -> Exact
                     correlation_df = correlation_plan.select(pl.all().cast(pl.Float64)).collect()
                     method_used = "exact"
 
-                # We drop Nulls prevents NaN propagation in the matrix
+                # We drop Nulls to prevent NaN propagation in the matrix
                 correlation_df = correlation_df.drop_nulls()
 
                 # Compute Matrices
@@ -214,7 +249,7 @@ class Profiler:
 
                             profile["correlations"]["pearson"] = pearson_matrix.to_dicts()
                         except Exception as e:
-                            warnings_list.append(f"Correlation (pearson) failed: {e}")
+                            profiler_warnings.append(f"Correlation (pearson) failed: {e}")
 
                         # Compute SPEARMAN (Rank data -> .corr())
                         try:
@@ -233,30 +268,30 @@ class Profiler:
 
                             profile["correlations"]["spearman"] = spearman_matrix.to_dicts()
                         except Exception as e:
-                            warnings_list.append(f"Correlation (spearman) failed: {e}")
+                            profiler_warnings.append(f"Correlation (spearman) failed: {e}")
 
                 # Metadata Injection
                 profile["_meta"]["correlation_method"] = method_used
 
         except Exception as e:
-            warnings_list.append(f"Correlation generation failed: {e}")
+            profiler_warnings.append(f"Correlation generation failed: {e}")
 
-    def _run_alerts_pass(self, profile: dict[str, Any], warnings_list: list[str]) -> None:
-        """Executes Pass 5: Diagnostic Alerts"""
+    def _run_diagnostics_pass(self, profile: dict[str, Any], profiler_warnings: list[str]) -> None:
+        """Executes Pass 5: Diagnostics"""
         try:
-            engine = DiagnosticEngine(profile)
-            alerts = engine.run()
+            diagnostic_engine = DiagnosticEngine(profile)
+            alerts = diagnostic_engine.run()
 
             # Serialize alerts to dicts for JSON output
             profile["alerts"] = [
                 {
-                    "column": a.column,
-                    "type": a.alert_type,
-                    "level": a.level.value,  # Convert Enum to string
-                    "message": a.message,
-                    "value": a.value,
+                    "column": alert.column,
+                    "type": alert.alert_type,
+                    "level": alert.level.value,  # Convert Enum to string
+                    "message": alert.message,
+                    "value": alert.value,
                 }
-                for a in alerts
+                for alert in alerts
             ]
         except Exception as e:
-            warnings_list.append(f"Alert generation failed: {e}")
+            profiler_warnings.append(f"Alert generation failed: {e}")

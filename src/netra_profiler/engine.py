@@ -21,18 +21,14 @@ def build_scalar_plan(lf: pl.LazyFrame) -> pl.LazyFrame:
     expressions.append(pl.len().alias("table_row_count"))
 
     # 2. Column-Level Computations
-    # We iterate over the schema to decide what stats to compute for each type.
+    # We iterate over the schema to compute the stats for each type.
     schema = lf.collect_schema()
     for column_name, data_type in schema.items():
         # Add column data type to the profile
         expressions.append(pl.lit(str(data_type)).alias(f"{column_name}_data_type"))
 
         # We handle NaN for Float columns before doing Null counts
-        if data_type in (pl.Float32, pl.Float64):
-            # Convert NaNs to true Nulls for accurate counting and math
-            column = pl.col(column_name).fill_nan(None)
-        else:
-            column = pl.col(column_name)
+        column = pl.col(column_name).fill_nan(None) if data_type.is_float() else pl.col(column_name)
 
         # Universal Stats (All Columns)
         expressions.extend(
@@ -198,9 +194,11 @@ def preprocess_complex_types(lf: pl.LazyFrame) -> pl.LazyFrame:
                 )
 
         # 2. Handle Lists & Arrays (Length Stats)
-        elif isinstance(data_type, (pl.List, pl.Array)):
-            # We replace the original column with length stats
+        elif isinstance(data_type, pl.List):
             expressions.append(pl.col(column_name).list.len().alias(f"{column_name}_len"))
+
+        elif isinstance(data_type, pl.Array):
+            expressions.append(pl.col(column_name).arr.len().alias(f"{column_name}_len"))
 
         # 3. Pass through everything else (Scalars)
         else:
