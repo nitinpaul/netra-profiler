@@ -346,11 +346,12 @@ class NetraCLIRenderer:
         Scans the flat profile dictionary, extracts base column names,
         and groups them by inferred type (Numeric vs Categorical).
         """
-        # Every column processed by the profiler gets a null_count. We use this as the master list.
+        # Every column processed by the profiler gets a null_count.
+        # We use this as the master list.
         columns = set()
         for key in profile:
             if key.endswith("_null_count"):
-                columns.add(key.replace("_null_count", ""))
+                columns.add(key.removesuffix("_null_count"))
 
         numerics: dict[str, dict[str, Any]] = {}
         categoricals: dict[str, dict[str, Any]] = {}
@@ -396,7 +397,7 @@ class NetraCLIRenderer:
         if not histogram_data:
             return ""
 
-        # Extract counts (Polars eager hist returns 'count' in its struct)
+        # Extract counts (Polars eager .hist() returns 'count' in its struct)
         counts = [float(bin_data.get("count", 0)) for bin_data in histogram_data]
         max_count = max(counts) if counts else 0
 

@@ -1,14 +1,12 @@
 import json
 import os
 import random
-import resource
 import sys
 import time
 from collections import Counter
 from pathlib import Path
 
 import polars as pl
-import psutil
 import typer
 
 from netra_profiler import Profiler, __version__
@@ -18,10 +16,14 @@ from netra_profiler.cli.console import NetraCLIRenderer, console
 def _get_peak_ram_usage_in_mb() -> float:
     """Returns the peak RAM usage (High-Water Mark) of the process in MB."""
     if sys.platform == "win32":
+        import psutil  # Deferred Windows-only import
+
         process = psutil.Process(os.getpid())
         # Windows gives us the exact Peak Working Set in bytes
         return process.memory_info().peak_wset / (1024 * 1024)
     else:
+        import resource  # Deferred Unix-only import
+
         rusage = resource.getrusage(resource.RUSAGE_SELF)
         if sys.platform == "darwin":
             # macOS ru_maxrss is in bytes
@@ -98,11 +100,11 @@ def profile(
     json_output: bool = typer.Option(
         False, "--json", help="Output raw JSON to stdout (silences UI)."
     ),
-    bins: int = typer.Option(20, "--bins", help="Number of histogram bins."),
-    top_k: int = typer.Option(10, "--top-k", help="Number of frequent items to show."),
+    bins: int = typer.Option(20, "--bins", min=1, help="Number of histogram bins."),
+    top_k: int = typer.Option(10, "--top-k", min=1, help="Number of frequent items to show."),
 ) -> None:
     """
-    Profile a dataset and generate the CLI report.
+    Profile the connected data source and generate the CLI report.
     """
     path = Path(file_path)
 
