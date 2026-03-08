@@ -16,13 +16,13 @@ from netra_profiler.cli.console import NetraCLIRenderer, console
 def _get_peak_ram_usage_in_mb() -> float:
     """Returns the peak RAM usage (High-Water Mark) of the process in MB."""
     if sys.platform == "win32":
-        import psutil  # Deferred Windows-only import
+        import psutil  # Deferred Windows-only import # noqa: PLC0415
 
         process = psutil.Process(os.getpid())
         # Windows gives us the exact Peak Working Set in bytes
         return process.memory_info().peak_wset / (1024 * 1024)
     else:
-        import resource  # Deferred Unix-only import
+        import resource  # Deferred Unix-only import # noqa: PLC0415
 
         rusage = resource.getrusage(resource.RUSAGE_SELF)
         if sys.platform == "darwin":
