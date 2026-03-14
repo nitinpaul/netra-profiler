@@ -2,7 +2,7 @@ from rich.theme import Theme
 
 # The Netra CLI Design System
 # We use semantic names so we can reconfigure easily later.
-NETRA_THEME = Theme(
+NETRA_CLI_THEME = Theme(
     {
         "brand": "bold cyan",  # Logo, Main Titles
         "accent": "magenta",  # Key metrics that need to pop

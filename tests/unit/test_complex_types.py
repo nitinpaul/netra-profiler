@@ -28,11 +28,10 @@ def test_complex_types_flattening() -> None:
     )
 
     # 2. Execution
-    # Initialize the profiler
-    # This triggers preprocess_complex_types)
+    # Initialize the profiler (This triggers preprocess_complex_types)
     profiler = Profiler(df)
     # Run Profile
-    profile = profiler.profile()
+    profile = profiler.run()
 
     # 3. Validation
     # We first inspect the transformed schema to ensure flattening happened
@@ -40,33 +39,37 @@ def test_complex_types_flattening() -> None:
     schema = profiler._df.collect_schema()
 
     # Check Struct Flattening (user -> user_name, user_age)
-    assert "user" not in schema, "Original struct column should be removed."
+    assert "user" not in schema, "Original struct column was not removed."
     assert "user_name" in schema, "Struct field 'name' was not flattened."
     assert "user_age" in schema, "Struct field 'age' was not flattened."
 
     # Check List Transformation (tags -> tags_len)
-    assert "tags" not in schema, "Original list column should be removed."
-    assert "tags_len" in schema, "List column was not converted to length."
+    assert "tags" not in schema, "Original list column was not removed."
+    assert "tags_length" in schema, "List column was not converted to length."
 
     # 4. Dynamic Assertion
-
     # Expected Age Mean
     # Extract the 'age' field from the struct and calculate mean
     expected_age_mean = df.select(pl.col("user").struct.field("age").mean()).item()
-    assert profile["user_age_mean"] == pytest.approx(expected_age_mean)
+    user_age_mean = profile["columns"]["user_age"].get("mean")
+    assert user_age_mean is not None
+    assert user_age_mean == pytest.approx(expected_age_mean)
 
     # Expected Name Null Count
     expected_null_count = df.select(pl.col("user").struct.field("name").null_count()).item()
-    assert profile["user_name_null_count"] == expected_null_count
+    assert profile["columns"]["user_name"].get("null_count") == expected_null_count
 
     # Expected List Length Stats
     # Calculate lengths of the lists
-    lengths_df = df.select(pl.col("tags").list.len().alias("len"))
+    lengths_df = df.select(pl.col("tags").list.len().alias("length"))
 
-    expected_min_length = lengths_df.select(pl.min("len")).item()
-    expected_max_length = lengths_df.select(pl.max("len")).item()
-    expected_mean_length = lengths_df.select(pl.mean("len")).item()
+    expected_min_length = lengths_df.select(pl.min("length")).item()
+    expected_max_length = lengths_df.select(pl.max("length")).item()
+    expected_mean_length = lengths_df.select(pl.mean("length")).item()
 
-    assert profile["tags_len_min"] == expected_min_length
-    assert profile["tags_len_max"] == expected_max_length
-    assert profile["tags_len_mean"] == pytest.approx(expected_mean_length)
+    assert profile["columns"]["tags_length"].get("min") == expected_min_length
+    assert profile["columns"]["tags_length"].get("max") == expected_max_length
+
+    tags_length_mean = profile["columns"]["tags_length"].get("mean")
+    assert tags_length_mean is not None
+    assert tags_length_mean == pytest.approx(expected_mean_length)

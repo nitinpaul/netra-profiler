@@ -25,11 +25,11 @@ def test_dirty_data_alerts() -> None:
 
     # 2. Execution
     profiler = Profiler(df)
-    profile = profiler.profile()
+    profile = profiler.run()
 
     # 3. Validation
     alerts = profile["alerts"]
-    alert_types = {a["type"] for a in alerts}  # We use a set for O(1) lookup
+    alert_types = {alert["type"] for alert in alerts}  # We use a set for O(1) lookup
 
     # Critical Integrity Checks
     assert "CONSTANT" in alert_types, "Failed to detect CONSTANT column."

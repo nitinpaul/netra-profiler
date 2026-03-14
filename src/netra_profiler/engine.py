@@ -95,11 +95,9 @@ def build_histogram_plans(lf: pl.LazyFrame) -> list[pl.LazyFrame]:
 
     for column_name, data_type in schema.items():
         if data_type.is_numeric():
-            # We fetch the raw column data (cast to Float64) instead of calculating
-            # the histogram in the Lazy engine. This allows the core orchestrator
-            # to execute .hist() in Eager mode, which guarantees that Polars returns
-            # the full bin metadata (breakpoints/categories) necessary for plotting,
-            # rather than the list of counts returned by the Lazy engine.
+            # We execute .hist() in Eager mode instead of the the Lazy engine,
+            # which guarantees that Polars returns the full bin metadata (breakpoints/categories)
+            # necessary for plotting, rather than the list of counts returned by the Lazy engine.
             plan = lf.select(pl.col(column_name).cast(pl.Float64))
             plans.append(plan)
 
@@ -126,6 +124,7 @@ def build_top_k_plan(lf: pl.LazyFrame, k: int = 10) -> list[pl.LazyFrame]:
             # Logic: GroupBy -> Count -> Sort -> Head(k)
             plan = (
                 lf.select(pl.col(column_name).cast(pl.String).alias("value"))
+                .drop_nulls()  # Prevent null from consuming a Top-K slot
                 .group_by("value")
                 .len()  # counts the group size
                 .sort("len", descending=True)
@@ -149,8 +148,6 @@ def build_correlation_plan(lf: pl.LazyFrame) -> pl.LazyFrame:
     This plan is intended to be collected (potentially with sampling)
     by the core module to compute the correlation matrix.
     """
-    # 1. Identify Numeric Columns
-    # We use the schema without scanning data
     schema = lf.collect_schema()
     numeric_columns = []
 
@@ -158,9 +155,8 @@ def build_correlation_plan(lf: pl.LazyFrame) -> pl.LazyFrame:
         if data_type.is_numeric():
             numeric_columns.append(column_name)
 
-    # 2. Return a plan selecting only these columns
+    # Return an empty plan if no numeric columns exist
     if not numeric_columns:
-        # Return an empty plan if no numeric columns exist
         return pl.LazyFrame({})
 
     return lf.select(numeric_columns)
@@ -195,10 +191,10 @@ def preprocess_complex_types(lf: pl.LazyFrame) -> pl.LazyFrame:
 
         # 2. Handle Lists & Arrays (Length Stats)
         elif isinstance(data_type, pl.List):
-            expressions.append(pl.col(column_name).list.len().alias(f"{column_name}_len"))
+            expressions.append(pl.col(column_name).list.len().alias(f"{column_name}_length"))
 
         elif isinstance(data_type, pl.Array):
-            expressions.append(pl.col(column_name).arr.len().alias(f"{column_name}_len"))
+            expressions.append(pl.col(column_name).arr.len().alias(f"{column_name}_length"))
 
         # 3. Pass through everything else (Scalars)
         else:

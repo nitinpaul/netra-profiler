@@ -80,7 +80,7 @@ def _scan_file(path: Path) -> tuple[pl.LazyFrame, str]:
 
 app = typer.Typer(
     name="netra",
-    help="Netra Profiler: High-performance data profiling for the modern stack.",
+    help="Netra Profiler: High-performance data profiling and quality tool.",
     add_completion=False,
 )
 
@@ -113,7 +113,7 @@ def profile(
         try:
             df, _ = _scan_file(path)
             profiler = Profiler(df)
-            profile = profiler.profile(bins=bins, top_k=top_k)
+            profile = profiler.run(bins=bins, top_k=top_k)
             print(json.dumps(profile, default=str))
         except Exception as e:
             # Output error as JSON for machine parsing
@@ -183,10 +183,10 @@ def profile(
             active_message = random.choice(engine_messages)
             progress.add_task(active_message, total=None)
 
-            profiler = Profiler(df)
-            profile = profiler.profile(bins=bins, top_k=top_k)
+            profiler = Profiler(df, dataset_name=path.name, dataset_format=file_type)
+            profile = profiler.run(bins=bins, top_k=top_k)
 
-            engine_time = profile.get("_meta", {}).get("engine_time", 0.0)
+            engine_time = profile["_meta"]["engine_time_seconds"]
             peak_ram_usage = _get_peak_ram_usage_in_mb()
 
             throughput = (file_size / engine_time) / (1024**3) if engine_time > 0 else 0.0

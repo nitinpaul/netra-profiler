@@ -17,14 +17,14 @@ from rich.table import Table
 from rich.text import Text
 
 from netra_profiler import __version__
-
-from .theme import NETRA_THEME
+from netra_profiler.cli.theme import NETRA_CLI_THEME
+from netra_profiler.types import ColumnMetrics, DiagnosticAlert, NetraProfile, is_numeric
 
 LATENCY_THRESHOLD = 0.01
 EXECUTION_TIME_THRESHOLD = 0.01
 TOP_K_STRING_LENGTH = 12
 
-console = Console(theme=NETRA_THEME)
+console = Console(theme=NETRA_CLI_THEME)
 
 
 class NetraCLIRenderer:
@@ -273,7 +273,7 @@ class NetraCLIRenderer:
 
     # --- Phase 3: Profiling Results ---
 
-    def _render_data_health_panel(self, alerts: list[dict[str, Any]], row_count: int) -> Panel:
+    def _render_data_health_panel(self, alerts: list[DiagnosticAlert], row_count: int) -> Panel:
         """Renders the prioritized list of dataset anomalies, anchored by the row count."""
 
         grid = Table.grid(padding=(1, 2))
@@ -289,8 +289,8 @@ class NetraCLIRenderer:
                 "[value]Dataset is healthy. No anomalies detected.[/value]",
             )
         else:
-            critical_alerts_count = sum(1 for a in alerts if a["level"] == "CRITICAL")
-            warning_alerts_count = sum(1 for a in alerts if a["level"] == "WARNING")
+            critical_alerts_count = sum(1 for alert in alerts if alert["level"] == "CRITICAL")
+            warning_alerts_count = sum(1 for alert in alerts if alert["level"] == "WARNING")
 
             if critical_alerts_count > 0 or warning_alerts_count > 0:
                 issues_count_parts = []
@@ -312,7 +312,7 @@ class NetraCLIRenderer:
 
             for alert in sorted_alerts:
                 alert_level = alert["level"]
-                alert_column = alert["column"]
+                alert_column = alert["column_name"]
                 alert_message = alert["message"]
 
                 if alert_level == "CRITICAL":
@@ -340,52 +340,18 @@ class NetraCLIRenderer:
         )
 
     def _group_column_metrics(
-        self, profile: dict[str, Any]
-    ) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
-        """
-        Scans the flat profile dictionary, extracts base column names,
-        and groups them by inferred type (Numeric vs Categorical).
-        """
-        # Every column processed by the profiler gets a null_count.
-        # We use this as the master list.
-        columns = set()
-        for key in profile:
-            if key.endswith("_null_count"):
-                columns.add(key.removesuffix("_null_count"))
+        self, profile: NetraProfile
+    ) -> tuple[dict[str, ColumnMetrics], dict[str, ColumnMetrics]]:
+        """Separates the hierarchical schema columns into Numerics and Categoricals."""
 
-        numerics: dict[str, dict[str, Any]] = {}
-        categoricals: dict[str, dict[str, Any]] = {}
+        numerics: dict[str, ColumnMetrics] = {}
+        categoricals: dict[str, ColumnMetrics] = {}
 
-        # We sort alphabetically for a deterministic UI layout
-        for column in sorted(columns):
-            base_metrics = {
-                "null_count": profile.get(f"{column}_null_count", 0),
-                "n_unique": profile.get(f"{column}_n_unique", 0),
-                "data_type": profile.get(f"{column}_data_type", "Unknown"),
-            }
-
-            # Type Inference: If it has a mean, it's definitively Numeric
-            if f"{column}_mean" in profile:
-                base_metrics.update(
-                    {
-                        "min": profile.get(f"{column}_min"),
-                        "mean": profile.get(f"{column}_mean"),
-                        "max": profile.get(f"{column}_max"),
-                        "p50": profile.get(f"{column}_p50"),  # Median
-                        "histogram": profile.get(f"{column}_histogram", []),
-                    }
-                )
-                numerics[column] = base_metrics
+        for column_name, metrics in sorted(profile["columns"].items()):
+            if is_numeric(metrics.get("data_type", "")):
+                numerics[column_name] = metrics
             else:
-                base_metrics.update(
-                    {
-                        "min_length": profile.get(f"{column}_min_length"),
-                        "mean_length": profile.get(f"{column}_mean_length"),
-                        "max_length": profile.get(f"{column}_max_length"),
-                        "top_k": profile.get(f"{column}_top_k", []),
-                    }
-                )
-                categoricals[column] = base_metrics
+                categoricals[column_name] = metrics
 
         return numerics, categoricals
 
@@ -463,7 +429,7 @@ class NetraCLIRenderer:
         return "[value]0%[/]"
 
     def _render_numeric_table(
-        self, numerics: dict[str, dict[str, Any]], row_count: int
+        self, numerics: dict[str, ColumnMetrics], row_count: int
     ) -> Table | None:
         """Renders the dedicated table for numeric variables."""
         if not numerics:
@@ -509,7 +475,7 @@ class NetraCLIRenderer:
         return table
 
     def _render_categorical_table(
-        self, categoricals: dict[str, dict[str, Any]], row_count: int
+        self, categoricals: dict[str, ColumnMetrics], row_count: int
     ) -> Table | None:
         """Renders the dedicated table for string, boolean, and categorical variables."""
         if not categoricals:
@@ -540,27 +506,27 @@ class NetraCLIRenderer:
             max_length = column_profile.get("max_length")
 
             if min_length is not None and mean_length is not None and max_length is not None:
-                lengths_str = f"{min_length} / {mean_length:.1f} / {max_length}"
+                lengths_string = f"{min_length} / {mean_length:.1f} / {max_length}"
             else:
-                lengths_str = "-"
+                lengths_string = "-"
 
             # Generate Top-K String
-            top_k_str = self._build_top_k_string(column_profile.get("top_k", []), row_count)
+            top_k_string = self._build_top_k_string(column_profile.get("top_k", []), row_count)
 
             table.add_row(
                 column_name_display_string,
                 null_percentage_string,
                 distinct_string,
-                lengths_str,
-                top_k_str,
+                lengths_string,
+                top_k_string,
             )
 
         return table
 
     def _build_variable_explorer_panel(
         self,
-        numerics: dict[str, dict[str, Any]],
-        categoricals: dict[str, dict[str, Any]],
+        numerics: dict[str, ColumnMetrics],
+        categoricals: dict[str, ColumnMetrics],
         row_count: int,
     ) -> Panel | None:
         """Fuses the numeric and categorical tables into a single Variable Explorer panel."""
@@ -572,7 +538,6 @@ class NetraCLIRenderer:
 
         renderables: list[RenderableType] = []
 
-        # Sub-header for Numerics
         if numeric_table:
             renderables.append(
                 Text.from_markup(
@@ -582,7 +547,6 @@ class NetraCLIRenderer:
             renderables.append("")  # Breathing room under the title
             renderables.append(numeric_table)
 
-        # Sub-header for Categoricals
         if categorical_table:
             if numeric_table:
                 renderables.append("")
@@ -604,11 +568,12 @@ class NetraCLIRenderer:
             padding=(1, 1),
         )
 
-    def render_profiling_results(self, profile: dict[str, Any]) -> None:
+    def render_profiling_results(self, profile: NetraProfile) -> None:
         """Assembles the final profiling results from the profile payload."""
 
-        row_count = profile.get("table_row_count", 0)
-        alerts = profile.get("alerts", [])
+        row_count = profile["dataset"]["row_count"]
+        alerts = profile["alerts"]
+
         numerics, categoricals = self._group_column_metrics(profile)
 
         health_card = self._render_data_health_panel(alerts, row_count)

@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any
+
+from netra_profiler.types import ColumnMetrics, NetraProfile, is_numeric
 
 
 class AlertLevel(str, Enum):
@@ -21,7 +22,7 @@ class DiagnosticConfig:
     HIGH_CORRELATION_THRESHOLD: float = 0.99
     ID_UNIQUENESS_THRESHOLD: float = 0.99
     MIN_ROWS_FOR_ID_CHECK: int = 100
-    POSSIBLE_NUMERIC_CHECK_COUNT: int = 5
+    POSSIBLE_NUMERIC_SAMPLE_SIZE: int = 5
 
 
 # Initialize default config
@@ -30,8 +31,8 @@ config = DiagnosticConfig()
 
 @dataclass
 class Alert:
-    column: str
-    alert_type: str  # e.g. "HIGH_NULLS"
+    column_name: str
+    type: str  # e.g. "HIGH_NULLS"
     level: AlertLevel
     message: str
     value: float | None = None
@@ -39,13 +40,17 @@ class Alert:
 
 class DiagnosticEngine:
     """
-    Analyzes the profile dictionary and generates a list of Alerts.
+    Analyzes the NetraProfile object and generates a list of Alerts.
     This is a pure logic layer: it does not query the data.
     """
 
-    def __init__(self, profile: dict[str, Any]):
+    def __init__(self, profile: NetraProfile):
         self.profile = profile
-        self.row_count = profile.get("table_row_count", 0)
+        self.dataset = self.profile.get("dataset", {})
+        self.columns = self.profile.get("columns", {})
+        self.correlations = self.profile.get("correlations", {})
+
+        self.row_count = self.dataset.get("row_count", 0)
         self.alerts: list[Alert] = []
 
     def run(self) -> list[Alert]:
@@ -54,29 +59,20 @@ class DiagnosticEngine:
             return []
 
         # 1. Scalar Checks (Column by Column)
-
-        # Extract unique column names from the keys
-        # We iterate through keys to find column names based on patterns like "_null_count"
-        # This is robust because our profile keys are structured: "{column_name}_{metric}"
-        columns = set()
-        for key in self.profile:
-            if key.endswith("_null_count"):
-                columns.add(key.replace("_null_count", ""))
-
-        for col in columns:
-            self._check_nulls(col)
-            self._check_constant(col)
-            self._check_cardinality(col)
-            self._check_skew(col)
-            self._check_zeros(col)
-            self._check_possible_numeric(col)
+        for column_name, column_profile in self.columns.items():
+            self._check_nulls(column_name, column_profile)
+            self._check_constant_and_id(column_name, column_profile)
+            self._check_cardinality(column_name, column_profile)
+            self._check_skew(column_name, column_profile)
+            self._check_zeros(column_name, column_profile)
+            self._check_possible_numeric(column_name, column_profile)
 
         # 2. Global/Relationship Checks
         self._check_correlations()
 
         return self.alerts
 
-    def _check_nulls(self, column_name: str) -> None:
+    def _check_nulls(self, column_name: str, column_profile: ColumnMetrics) -> None:
         """
         Analyzes missing data.
 
@@ -84,14 +80,14 @@ class DiagnosticEngine:
             - EMPTY_COLUMN (CRITICAL): Nulls > 95%. Likely useless.
             - HIGH_NULLS (CRITICAL): Nulls > 50%. Hard to impute.
         """
-        null_count = self.profile.get(f"{column_name}_null_count", 0)
+        null_count = column_profile.get("null_count", 0)
         null_percentage = null_count / self.row_count
 
         if null_percentage > config.NULL_CRITICAL_THRESHOLD:
             self.alerts.append(
                 Alert(
-                    column=column_name,
-                    alert_type="EMPTY_COLUMN",
+                    column_name=column_name,
+                    type="EMPTY_COLUMN",
                     level=AlertLevel.CRITICAL,
                     message=(
                         f"Column is {null_percentage:.1%} empty. "
@@ -103,97 +99,123 @@ class DiagnosticEngine:
         elif null_percentage > config.NULL_WARNING_THRESHOLD:
             self.alerts.append(
                 Alert(
-                    column=column_name,
-                    alert_type="HIGH_NULLS",
-                    level=AlertLevel.CRITICAL,
+                    column_name=column_name,
+                    type="HIGH_NULLS",
+                    level=AlertLevel.WARNING,
                     message=f"Column is {null_percentage:.1%} empty. Imputation may be difficult.",
                     value=null_percentage,
                 )
             )
 
-    def _check_constant(self, column_name: str) -> None:
+    def _check_constant_and_id(self, column_name: str, column_profile: ColumnMetrics) -> None:
         """
-        Analyzes value variance.
+        Analyzes value variance and detects Primary Keys or Duplicate Keys.
 
         Alerts:
             - CONSTANT (CRITICAL): Only 1 unique value. Adds no information.
             - ALL_DISTINCT (CRITICAL): Unique count ~= Row count. Likely an ID/PII.
         """
-        n_unique = self.profile.get(f"{column_name}_n_unique")
+        n_unique = column_profile.get("n_unique")
+        column_data_type = column_profile.get("data_type", "")
+
+        if not n_unique:
+            return
 
         if n_unique == 1:
             self.alerts.append(
                 Alert(
-                    column=column_name,
-                    alert_type="CONSTANT",
+                    column_name=column_name,
+                    type="CONSTANT",
                     level=AlertLevel.CRITICAL,
                     message="Column has only 1 unique value. It adds no variance to the dataset.",
                     value=1.0,
                 )
             )
+            return
+
+        # ID/PK Validation Logic
+        # We strictly only evaluate Ints and Strings for PK status
+        is_id_candidate = any(
+            data_type in column_data_type for data_type in ["Int", "String", "Utf8", "Categorical"]
+        )
 
         # Check for ALL_DISTINCT (ID columns)
         # We flag if the dataset is reasonably sized (> 100 rows)
         # and unique count is very close to row count (e.g. > 99%).
         if (
-            n_unique
+            is_id_candidate
             and self.row_count > config.MIN_ROWS_FOR_ID_CHECK
             and n_unique > (self.row_count * config.ID_UNIQUENESS_THRESHOLD)
         ):
-            distinct_ratio = n_unique / self.row_count
-
-            self.alerts.append(
-                Alert(
-                    column=column_name,
-                    alert_type="ALL_DISTINCT",
-                    level=AlertLevel.INFO,
-                    message=(
-                        f"Column is {distinct_ratio:.1%} distinct. Likely a Primary Key or ID."
-                    ),
-                    value=n_unique,
+            if n_unique == self.row_count:
+                # Perfect Primary Key
+                self.alerts.append(
+                    Alert(
+                        column_name=column_name,
+                        type="ALL_DISTINCT",
+                        level=AlertLevel.INFO,
+                        message="Column is 100% distinct. Likely a Primary Key or ID.",
+                        value=n_unique,
+                    )
                 )
-            )
+            else:
+                # Corrupted Primary Key
+                duplicates = self.row_count - n_unique
+                self.alerts.append(
+                    Alert(
+                        column_name=column_name,
+                        type="DUPLICATE_KEYS",
+                        level=AlertLevel.WARNING,
+                        message=(
+                            f"Column is almost unique, but contains {duplicates} duplicate values."
+                        ),
+                        value=n_unique,
+                    )
+                )
 
-    def _check_cardinality(self, column_name: str) -> None:
+    def _check_cardinality(self, column_name: str, column_profile: ColumnMetrics) -> None:
         """
         Analyzes cardinality of string columns.
 
         Alerts:
             - HIGH_CARDINALITY (WARNING): > 10k unique values. Expensive for ML.
         """
-        n_unique = self.profile.get(f"{column_name}_n_unique")
-        dtype_hint = "String" if f"{column_name}_mean" not in self.profile else "Numeric"
+        n_unique = column_profile.get("n_unique")
+        data_type = column_profile.get("data_type", "")
+
+        # Check if it is NOT a numeric type
+        is_string_type = not is_numeric(data_type)
 
         # Only flag strings (Numeric high cardinality is normal)
         if (
-            dtype_hint == "String"
+            is_string_type
             and n_unique
             and n_unique > config.HIGH_CARDINALITY_THRESHOLD
             and n_unique < self.row_count
         ):
             self.alerts.append(
                 Alert(
-                    column=column_name,
-                    alert_type="HIGH_CARDINALITY",
+                    column_name=column_name,
+                    type="HIGH_CARDINALITY",
                     level=AlertLevel.WARNING,
                     message=f"High cardinality ({n_unique} unique values). Avoid One-Hot Encoding.",
                     value=n_unique,
                 )
             )
 
-    def _check_skew(self, column_name: str) -> None:
+    def _check_skew(self, column_name: str, column_profile: ColumnMetrics) -> None:
         """
         Analyzes distribution shape.
 
         Alerts:
             - SKEWED (WARNING): Skew > 2.0. Requires log-transformation.
         """
-        skew = self.profile.get(f"{column_name}_skew")
+        skew = column_profile.get("skew")
         if skew is not None and abs(skew) > config.SKEW_THRESHOLD:
             self.alerts.append(
                 Alert(
-                    column=column_name,
-                    alert_type="SKEWED",
+                    column_name=column_name,
+                    type="SKEWED",
                     level=AlertLevel.WARNING,
                     message=(
                         f"Distribution is highly skewed ({skew:.2f}). "
@@ -203,70 +225,70 @@ class DiagnosticEngine:
                 )
             )
 
-    def _check_zeros(self, column_name: str) -> None:
+    def _check_zeros(self, column_name: str, column_profile: ColumnMetrics) -> None:
         """
         Analyzes zero-inflation.
 
         Alerts:
-            - ZERO_INFLATED (WARNING): > 10% zeros. Potential missing data proxy.
+            - ZERO_INFLATED (WARNING): > 10% zeros. Potential 'missing data' proxy.
         """
-        # We use Top-K to detect this cheaply.
-        top_k = self.profile.get(f"{column_name}_top_k")
-        if top_k and isinstance(top_k, list):
-            for item in top_k:
-                # Check if value is 0 (or 0.0)
-                if item["value"] == 0 or item["value"] == 0.0:
-                    zero_count = item["count"]
-                    zero_percentage = zero_count / self.row_count
+        # We check the Top-K values to detect this cheaply.
+        top_k_list = column_profile.get("top_k", [])
 
-                    if zero_percentage > config.ZERO_INFLATED_THRESHOLD:
-                        self.alerts.append(
-                            Alert(
-                                column=column_name,
-                                alert_type="ZERO_INFLATED",
-                                level=AlertLevel.WARNING,
-                                message=(
-                                    f"Column is {zero_percentage:.1%} zeros. "
-                                    "Check if '0' represents missing data."
-                                ),
-                                value=zero_percentage,
-                            )
+        for top_k_item in top_k_list:
+            value = top_k_item["value"]
+            # 0 catches both int(0) and float(0.0) since in Python 0 == 0.0
+            # We explicitly check "0" and "0.0" for string columns.
+            if value in {0, "0", "0.0"}:
+                zero_count = top_k_item["count"]
+                zero_percentage = zero_count / self.row_count
+
+                if zero_percentage > config.ZERO_INFLATED_THRESHOLD:
+                    self.alerts.append(
+                        Alert(
+                            column_name=column_name,
+                            type="ZERO_INFLATED",
+                            level=AlertLevel.WARNING,
+                            message=(
+                                f"Column is {zero_percentage:.1%} zeros. "
+                                "Check if '0' represents missing data."
+                            ),
+                            value=zero_percentage,
                         )
-                    break
+                    )
+                break
 
-    def _check_possible_numeric(self, column_name: str) -> None:
+    def _check_possible_numeric(self, column_name: str, column_profile: ColumnMetrics) -> None:
         """
         Heuristic check for string columns that contain numbers.
 
         Alerts:
             - POSSIBLE_NUMERIC (INFO): Recommendation to cast type.
         """
-        # 1. Skip if already numeric
-        if f"{column_name}_mean" in self.profile:
+        data_type = column_profile.get("data_type", "")
+
+        # 1. Skip if the engine already knows it's a number
+        if is_numeric(data_type):
             return
 
         # We check the Top-K most frequent values. If the top 5 values
         # can all be cast to float, it is highly likely the column is numeric.
         # We use Top-K because checking every row is expensive (O(N)),
         # while Top-K is O(1) here.
-        top_k = self.profile.get(f"{column_name}_top_k")
+        top_k_list = column_profile.get("top_k", [])
 
-        # 2. Validate input structure
-        if not top_k or not isinstance(top_k, list) or len(top_k) == 0:
-            return
-
-        # 3. Check the sample (Top 5)
+        # 2. Check the sample (Top 5)
         # We only look at values that are NOT None
         sample_values = [
-            item["value"]
-            for item in top_k[: config.POSSIBLE_NUMERIC_CHECK_COUNT]
-            if item["value"] is not None
+            top_k_item["value"]
+            for top_k_item in top_k_list[: config.POSSIBLE_NUMERIC_SAMPLE_SIZE]
+            if top_k_item["value"] is not None
         ]
 
         if not sample_values:
             return
 
-        # 4. Try to convert all sampled values
+        # 3. Try to convert all sampled values
         try:
             # If ANY value fails conversion, the whole column is treated as String
             # This is strict but safe.
@@ -276,8 +298,8 @@ class DiagnosticEngine:
             # If we survived the loop, they are all numbers
             self.alerts.append(
                 Alert(
-                    column=column_name,
-                    alert_type="POSSIBLE_NUMERIC",
+                    column_name=column_name,
+                    type="POSSIBLE_NUMERIC",
                     level=AlertLevel.INFO,
                     message=("Top values look like numbers. Consider casting to Integer/Float."),
                     value=None,
@@ -294,51 +316,27 @@ class DiagnosticEngine:
         Alerts:
             - HIGH_CORRELATION (WARNING): > 0.99. Collinearity/Duplicate data.
         """
-        correlations = self.profile.get("correlations", {})
+        # We explicitly extract the lists using string literals so mypy
+        # statically knows these are list[CorrelationPair] and not the sampling_method string.
+        pearson_matrix = self.correlations.get("pearson", [])
+        spearman_matrix = self.correlations.get("spearman", [])
 
-        for method in ["pearson", "spearman"]:
-            correlation_matrix = correlations.get(method, [])
-            if not correlation_matrix:
-                continue
+        for method, matrix in [("pearson", pearson_matrix), ("spearman", spearman_matrix)]:
+            for edge in matrix:
+                column_a = edge["column_a"]
+                column_b = edge["column_b"]
+                score = edge["score"]
 
-            checked_pairs = set()
-
-            for row in correlation_matrix:
-                primary_column = row.get("column")
-                if not primary_column:
-                    continue
-
-                for comparison_column, value in row.items():
-                    # SKIP 1: The 'column' key (it's the label, not a data point)
-                    # SKIP 2: The Diagonal (Variable A vs Variable A is always 1.0)
-                    if comparison_column in ("column", primary_column):
-                        continue
-
-                    # SKIP 3: Missing correlations (NaN/None)
-                    if value is None:
-                        continue
-
-                    # CANONICALIZATION:
-                    # Sort the pair so that ("Age", "Salary") and ("Salary", "Age")
-                    # result in the exact same tuple ID: ('Age', 'Salary').
-                    pair = tuple(sorted((primary_column, comparison_column)))
-                    # If we have already seen this pair (from the other direction), skip it.
-                    if pair in checked_pairs:
-                        continue
-
-                    if abs(value) > config.HIGH_CORRELATION_THRESHOLD:
-                        self.alerts.append(
-                            Alert(
-                                column=f"{primary_column} <-> {comparison_column}",
-                                alert_type="HIGH_CORRELATION",
-                                level=AlertLevel.WARNING,
-                                message=(
-                                    f"Columns are highly correlated ({value:.4f}) via {method}. "
-                                    "They contain redundant information."
-                                ),
-                                value=value,
-                            )
+                if abs(score) > config.HIGH_CORRELATION_THRESHOLD:
+                    self.alerts.append(
+                        Alert(
+                            column_name=f"{column_a} <-> {column_b}",
+                            type="HIGH_CORRELATION",
+                            level=AlertLevel.WARNING,
+                            message=(
+                                f"Columns are highly correlated ({score:.4f}) via {method}. "
+                                "They contain redundant information."
+                            ),
+                            value=score,
                         )
-
-                        # Mark this pair as "seen" so we don't report it again
-                        checked_pairs.add(pair)
+                    )
