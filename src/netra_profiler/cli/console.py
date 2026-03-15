@@ -44,15 +44,15 @@ class NetraCLIRenderer:
         self._data_source_name: str | None = None
 
         # Phase 1: The Data Source Connection Panel
-        self._data_source_panel: Panel | None = None
+        self._data_source_panel: RenderableType | None = None
 
         # Phase 2: The Engine Progress, Status & Telemetry Panels
         self._engine_progress_bar: Progress | None = None
-        self._engine_status_panel: Panel | None = None
-        self._engine_telemetry_panel: Panel | None = None
+        self._engine_status_panel: RenderableType | None = None
+        self._engine_telemetry_panel: RenderableType | None = None
 
         # Phase 3: The Profiling Results Panels (Health + Variables)
-        self._profiling_results: Group | None = None
+        self._profiling_results: RenderableType | None = None
 
         # The Live Context
         self.live = Live(
@@ -121,29 +121,28 @@ class NetraCLIRenderer:
         step: "data_source" or "profiling"
         """
         grid = Table.grid(expand=True)
-        grid.add_column(style="muted")
-
-        grid.add_row(f"[critical]{message}[/critical]")
-        if hint:
-            grid.add_row(f"└─ [not dim][value]{hint}[/value][/]")
+        grid.add_column()
 
         step_title = step.replace("_", " ").title()
-        title_string = f"[not dim][critical]✖[/critical] [value]{step_title}[/value][/]"
 
-        error_panel = Panel(
-            grid,
-            title=title_string,
-            title_align="left",
-            border_style="critical",
-            box=box.ROUNDED,
-            padding=(1, 1),
-        )
+        # We use a simple bold header without ASCII boxes
+        grid.add_row(f"[bold #FF004D]✖ {step_title} Error[/]")
+        grid.add_row("")  # Blank line for readability
+        grid.add_row(f"[critical]{message}[/critical]")
+
+        if hint:
+            grid.add_row("")  # Blank line for readability
+            grid.add_row(f"[value]{hint}[/value]")
+
+        error_renderable = Padding(grid, (1, 1))
 
         # Slot the error into the correct panel
         if step == "data_source":
-            self._data_source_panel = error_panel
+            self._data_source_panel = error_renderable
         elif step == "profiling":
-            self._engine_telemetry_panel = error_panel
+            self._engine_telemetry_panel = error_renderable
+            self._engine_status_panel = None
+            self._engine_progress_bar = None
 
         self._refresh()
 

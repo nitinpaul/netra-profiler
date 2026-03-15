@@ -1,3 +1,4 @@
+import csv
 import json
 import os
 import random
@@ -55,7 +56,20 @@ def _format_bytes(size: int) -> str:
     return f"{n:.2f} {labels[count]}"
 
 
-def _scan_file(path: Path) -> tuple[pl.LazyFrame, str]:
+def _detect_csv_separator(path: Path) -> str:
+    """Peeks at the first chunk of a CSV to auto-detect the separator."""
+    try:
+        with open(path, encoding="utf-8") as file:
+            sample = "".join([file.readline() for _ in range(5)])
+            # We restrict the sniffer to common data delimiters to prevent false positives
+            dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|")
+            return dialect.delimiter
+    except Exception:
+        # If sniffing fails (e.g., weird encoding or 1-column file), fallback to standard comma
+        return ","
+
+
+def _scan_file(path: Path, full_inference: bool = False) -> tuple[pl.LazyFrame, str]:
     """
     Creates a LazyFrame based on file extension.
     Returns (LazyFrame, file_type_label).
@@ -63,7 +77,13 @@ def _scan_file(path: Path) -> tuple[pl.LazyFrame, str]:
     extension = path.suffix.lower()
 
     if extension == ".csv":
-        return pl.scan_csv(path), "CSV"
+        # We pass the detected separator explicitly to Polars
+        separator = _detect_csv_separator(path)
+
+        infer_schema_length = None if full_inference else 10000
+        return pl.scan_csv(
+            path, separator=separator, infer_schema_length=infer_schema_length
+        ), f"CSV (separator: '{separator}')"
     elif extension == ".parquet":
         return pl.scan_parquet(path), "Parquet"
     elif extension in {".ipc", ".arrow"}:
@@ -102,6 +122,9 @@ def profile(
     ),
     bins: int = typer.Option(20, "--bins", min=1, help="Number of histogram bins."),
     top_k: int = typer.Option(10, "--top-k", min=1, help="Number of frequent items to show."),
+    full_inference: bool = typer.Option(
+        False, "--full-inference", help="Force full-file schema inference for messy CSVs."
+    ),
 ) -> None:
     """
     Profile the connected data source and generate the CLI report.
@@ -140,7 +163,7 @@ def profile(
 
             # Logic: Scan and Detect
             load_start = time.time()
-            df, file_type = _scan_file(path)
+            df, file_type = _scan_file(path, full_inference=full_inference)
             file_size = os.path.getsize(path)
 
             schema = df.collect_schema()
@@ -161,10 +184,15 @@ def profile(
 
         except Exception as e:
             # If loading fails, we transition to error state and exit cleanly
+
+            raw_error = str(e)
+            # Strip out Polars' internal Python suggestions
+            clean_error = raw_error.split("You might want to try:")[0].strip()
+
             ui.render_fatal_error(
                 step="data_source",
                 message=f"Connection failed to data source: {path}",
-                hint=f"{str(e)}",
+                hint=clean_error,
             )
             raise typer.Exit(code=1) from None
 
@@ -198,10 +226,25 @@ def profile(
             )
 
         except Exception as e:
+            raw_error = str(e)
+            # Strip out Polars' internal Python suggestions
+            clean_error = raw_error.split("You might want to try:")[0].strip()
+
+            # If it's a parsing/type error, give the user the exact solution
+            if "parse" in raw_error or "primitive" in raw_error:
+                message = "Dataset contains mixed types (Schema Drift)."
+                hint = (
+                    f"{clean_error}\n\n[brand]Tip:[/] Run with [bold]--full-inference[/bold] "
+                    "to force full-file schema inference."
+                )
+            else:
+                message = "Engine panicked during profiling."
+                hint = clean_error
+
             ui.render_fatal_error(
                 step="profiling",
-                message="Engine panicked during profiling.",
-                hint=f"{str(e)}",
+                message=message,
+                hint=hint,
             )
             raise typer.Exit(code=1) from None
 
