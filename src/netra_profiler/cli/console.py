@@ -310,19 +310,22 @@ class NetraCLIRenderer:
             alert_level_ranks = {"CRITICAL": 0, "WARNING": 1, "INFO": 2}
             sorted_alerts = sorted(alerts, key=lambda x: alert_level_ranks.get(x["level"], 3))
 
+            # Calculate the width of the longest alert type in the profile
+            max_badge_length = max((len(a["type"]) for a in sorted_alerts), default=16)
+
             for alert in sorted_alerts:
                 alert_level = alert["level"]
                 alert_column = alert["column_name"]
                 alert_message = alert["message"]
+                alert_type = alert["type"].replace("_", " ")
 
                 if alert_level == "CRITICAL":
-                    badge = " [bold #000000 on #8C0000][ CRITICAL ][/]"
+                    badge = f" [bold #000000 on #7A0000][ {alert_type:^{max_badge_length}} ][/]"
                 elif alert_level == "WARNING":
-                    badge = " [bold #000000 on #997602][ WARNING  ][/]"
+                    badge = f" [bold #000000 on #7D6000][ {alert_type:^{max_badge_length}} ][/]"
                 else:
-                    badge = " [bold #000000 on #737373][   INFO   ][/]"
+                    badge = f" [bold #000000 on #737373][ {alert_type:^{max_badge_length}} ][/]"
 
-                # We stack the column name and the message using a newline
                 alert_details = f"[brand]{alert_column}[/brand]\n[muted]└─ {alert_message}[/muted]"
 
                 grid.add_row(badge, alert_details)
