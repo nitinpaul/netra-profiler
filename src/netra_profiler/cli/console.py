@@ -23,6 +23,7 @@ from netra_profiler.types import ColumnMetrics, DiagnosticAlert, NetraProfile, i
 LATENCY_THRESHOLD = 0.01
 EXECUTION_TIME_THRESHOLD = 0.01
 TOP_K_STRING_LENGTH = 12
+ZERO_POINT_ONE = 0.1
 
 console = Console(theme=NETRA_CLI_THEME)
 
@@ -422,10 +423,16 @@ class NetraCLIRenderer:
 
     def _format_null_percentage(self, null_count: int, row_count: int) -> str:
         """Calculates and formats the missing values percentage string."""
-        null_percentage = (null_count / row_count) * 100 if row_count else 0
-        if null_percentage > 0:
-            return f"[#C75B5B]{null_percentage:.1f}%[/]"
-        return "[value]0%[/]"
+        if null_count == 0 or row_count == 0:
+            return "[value]0%[/]"
+
+        null_percentage = (null_count / row_count) * 100
+
+        # Prevent tiny fractions from rounding down to a confusing "0.0%"
+        if null_percentage < ZERO_POINT_ONE:
+            return "[#C75B5B]< 0.1%[/]"
+
+        return f"[#C75B5B]{null_percentage:.1f}%[/]"
 
     def _render_numeric_table(
         self, numerics: dict[str, ColumnMetrics], row_count: int
