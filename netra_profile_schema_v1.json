@@ -42,6 +42,10 @@
             "type": "integer",
             "minimum": 0
           },
+          "zero_count": {
+            "type": "integer",
+            "minimum": 0
+          },
           "n_unique": {
             "type": "integer",
             "minimum": 0

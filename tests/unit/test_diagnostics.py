@@ -14,11 +14,12 @@ def test_dirty_data_alerts() -> None:
     # 1. Setup: Create data with enough rows (20) to generate statistical significance
     rows = 20
     data = {
-        "constant_col": [1] * rows,  # CONSTANT
-        "empty_col": [None] * (rows - 1) + [1],  # HIGH_NULLS (>95%)
-        "id_col": [str(i) for i in range(rows)],  # ALL_DISTINCT (20 unique)
+        "constant_column": [1] * rows,  # CONSTANT
+        "empty_column": [None] * (rows - 1) + [1],  # HIGH_NULLS (>95%)
+        "id_column": [str(i) for i in range(rows)],  # ALL_DISTINCT (20 unique)
         # Should NOT trigger if threshold is 100 rows
-        "skewed_col": [1] * (rows - 1) + [1_000_000],  # SKEWED (Skew > 2.0)
+        "skewed_column": [1] * (rows - 1) + [1_000_000],  # SKEWED (Skew > 2.0)
+        "zero_column": [0] * 15 + [1] * 5,  # ZERO_INFLATED (75% zeros)
     }
 
     df = pl.DataFrame(data)
@@ -41,6 +42,7 @@ def test_dirty_data_alerts() -> None:
 
     # Statistical Checks
     assert "SKEWED" in alert_types, f"Failed to detect skew. Found: {alert_types}"
+    assert "ZERO_INFLATED" in alert_types, "Failed to detect zero inflation."
 
     # Logic Checks (Config Validation)
     # Ensure strict config adherence: 20 rows is too small to confidently flag an ID

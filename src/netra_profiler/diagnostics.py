@@ -232,31 +232,29 @@ class DiagnosticEngine:
         Alerts:
             - ZERO_INFLATED (WARNING): > 10% zeros. Potential 'missing data' proxy.
         """
-        # We check the Top-K values to detect this cheaply.
-        top_k_list = column_profile.get("top_k", [])
+        data_type = column_profile.get("data_type", "")
 
-        for top_k_item in top_k_list:
-            value = top_k_item["value"]
-            # 0 catches both int(0) and float(0.0) since in Python 0 == 0.0
-            # We explicitly check "0" and "0.0" for string columns.
-            if value in {0, "0", "0.0"}:
-                zero_count = top_k_item["count"]
-                zero_percentage = zero_count / self.row_count
+        if not is_numeric(data_type):
+            return
 
-                if zero_percentage > config.ZERO_INFLATED_THRESHOLD:
-                    self.alerts.append(
-                        Alert(
-                            column_name=column_name,
-                            type="ZERO_INFLATED",
-                            level=AlertLevel.WARNING,
-                            message=(
-                                f"Column is {zero_percentage:.1%} zeros. "
-                                "Check if '0' represents missing data."
-                            ),
-                            value=zero_percentage,
-                        )
+        zero_count = column_profile.get("zero_count", 0) or 0
+
+        if zero_count > 0 and self.row_count > 0:
+            zero_percentage = zero_count / self.row_count
+
+            if zero_percentage > config.ZERO_INFLATED_THRESHOLD:
+                self.alerts.append(
+                    Alert(
+                        column_name=column_name,
+                        type="ZERO_INFLATED",
+                        level=AlertLevel.WARNING,
+                        message=(
+                            f"Column is {zero_percentage:.1%} zeros. "
+                            "Check if '0' represents missing data."
+                        ),
+                        value=zero_percentage,
                     )
-                break
+                )
 
     def _check_possible_numeric(self, column_name: str, column_profile: ColumnMetrics) -> None:
         """

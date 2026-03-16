@@ -46,6 +46,8 @@ def build_scalar_plan(lf: pl.LazyFrame) -> pl.LazyFrame:
                     column.mean().alias(f"{column_name}_mean"),
                     column.min().alias(f"{column_name}_min"),
                     column.max().alias(f"{column_name}_max"),
+                    # Native zero counting
+                    (column == 0).sum().alias(f"{column_name}_zero_count"),
                     # Distribution Stats
                     column.std().alias(f"{column_name}_std"),
                     column.skew().alias(f"{column_name}_skew"),

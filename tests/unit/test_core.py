@@ -14,7 +14,7 @@ def sample_df() -> pl.DataFrame:
     return pl.DataFrame(
         {
             "age": [25, 30, 35, None, 25],  # Numeric with nulls & duplicates
-            "salary": [50000.0, 60000.0, 75000.0, 50000.0, None],  # Float with nulls
+            "salary": [50000.0, 0.0, 75000.0, 50000.0, None],  # Float with nulls
             "city": ["Groningen", "Thrissur", "Delhi", None, "Groningen"],  # String
         }
     )
@@ -53,6 +53,10 @@ def test_numeric_stats(profile: NetraProfile, sample_df: pl.DataFrame) -> None:
     assert age_column.get("min") == sample_df["age"].min()
     assert age_column.get("max") == sample_df["age"].max()
     assert age_column.get("null_count") == sample_df["age"].null_count()
+
+    assert age_column.get("zero_count") == 0  # Age has no zeros
+    salary_column = profile["columns"]["salary"]
+    assert salary_column.get("zero_count") == 1  # Salary has exactly one 0.0
 
     # For approx, we ensure it's not None to prevent pytest TypeErrors
     age_mean = age_column.get("mean")

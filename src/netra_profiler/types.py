@@ -47,6 +47,7 @@ class ColumnMetrics(TypedDict, total=False):
 
     # Numeric Specific
     mean: float | None
+    zero_count: int | None
     std: float | None
     skew: float | None
     kurtosis: float | None

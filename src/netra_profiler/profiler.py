@@ -348,6 +348,7 @@ class Profiler:
                     "min",
                     "max",
                     "mean",
+                    "zero_count",
                     "std",
                     "skew",
                     "kurtosis",
