@@ -12,6 +12,7 @@ import typer
 
 from netra_profiler import Profiler, __version__
 from netra_profiler.cli.console import NetraCLIRenderer, console
+from netra_profiler.types import NetraProfile
 
 
 def _get_peak_ram_usage_in_mb() -> float:
@@ -20,7 +21,7 @@ def _get_peak_ram_usage_in_mb() -> float:
         import psutil  # Deferred Windows-only import # noqa: PLC0415
 
         process = psutil.Process(os.getpid())
-        # Windows gives us the exact Peak Working Set in bytes
+        # Windows "Peak Working Set" in bytes
         return process.memory_info().peak_wset / (1024 * 1024)
     else:
         import resource  # Deferred Unix-only import # noqa: PLC0415
@@ -100,9 +101,122 @@ def _scan_file(path: Path, full_inference: bool = False) -> tuple[pl.LazyFrame, 
 
 app = typer.Typer(
     name="netra",
-    help="Netra Profiler: High-performance data profiling and quality tool.",
+    help="Netra Profiler: High-performance profiling and data quality tool built with Polars.",
     add_completion=False,
 )
+
+
+def _run_json_mode(path: Path, bins: int, top_k: int, full_inference: bool) -> None:
+    """Runs the profiler and prints the raw JSON to stdout."""
+    try:
+        df, _ = _scan_file(path, full_inference=full_inference)
+        profiler = Profiler(df)
+        profile = profiler.run(bins=bins, top_k=top_k)
+        print(json.dumps(profile, default=str))
+    except Exception as e:
+        # Output error as JSON for machine parsing
+        print(json.dumps({"error": str(e)}))
+        raise typer.Exit(code=1) from None
+
+
+def _connect_data_source(
+    ui: NetraCLIRenderer, path: Path, full_inference: bool
+) -> tuple[pl.LazyFrame, str, int]:
+    """Handles file scanning, schema inference, and Data Source UI rendering."""
+    try:
+        ui.render_data_source_spinner(path.name)
+
+        load_start = time.time()
+        df, file_type = _scan_file(path, full_inference=full_inference)
+        file_size = os.path.getsize(path)
+
+        schema = df.collect_schema()
+        load_time = time.time() - load_start
+
+        datatypes = [str(t) for t in schema.values()]
+        datatype_counts = Counter(datatypes)
+        schema_info = ", ".join([f"{v} {k}" for k, v in datatype_counts.items()])
+
+        file_info = {"path": str(path), "size": _format_bytes(file_size), "type": file_type}
+
+        ui.render_data_source_panel(
+            file_info=file_info,
+            schema_info=schema_info,
+            columns=len(schema),
+            time_taken=load_time,
+        )
+
+        return df, file_type, file_size
+
+    except Exception as e:
+        raw_error = str(e)
+        clean_error = raw_error.split("You might want to try:")[0].strip()
+
+        ui.render_fatal_error(
+            step="data_source",
+            message=f"Connection failed to data source: {path}",
+            hint=clean_error,
+        )
+        raise typer.Exit(code=1) from None
+
+
+def _execute_profiling(
+    ui: NetraCLIRenderer,
+    profiler: Profiler,
+    file_size: int,
+    bins: int,
+    top_k: int,
+) -> NetraProfile:
+    """Handles core profiling, telemetry calculation, and Engine Status UI rendering."""
+    try:
+        progress = ui.render_engine_status_panel()
+        engine_messages = [
+            "Resolving lazy execution graph...",
+            "Allocating zero-copy memory buffers...",
+            "Vectorizing data streams...",
+            "Threading execution pipelines...",
+            "Collapsing data dimensions...",
+            "Calibrating Apache Arrow matrices...",
+            "Synthesizing profile topology...",
+        ]
+        active_message = random.choice(engine_messages)
+        progress.add_task(active_message, total=None)
+
+        profile = profiler.run(bins=bins, top_k=top_k)
+
+        engine_time = profile["_meta"]["engine_time_seconds"]
+        peak_ram_usage = _get_peak_ram_usage_in_mb()
+
+        throughput = (file_size / engine_time) / (1024**3) if engine_time > 0 else 0.0
+
+        ui.render_engine_telemetry_panel(
+            engine_time=engine_time,
+            throughput_gb_s=throughput,
+            peak_ram_usage=peak_ram_usage,
+        )
+
+        return profile
+
+    except Exception as e:
+        raw_error = str(e)
+        clean_error = raw_error.split("You might want to try:")[0].strip()
+
+        if "parse" in raw_error or "primitive" in raw_error:
+            message = "Dataset contains mixed types (Schema Drift)."
+            hint = (
+                f"{clean_error}\n\n[brand]Tip:[/] Run with [bold]--full-inference[/bold] "
+                "to force full-file schema inference."
+            )
+        else:
+            message = "Engine panicked during profiling."
+            hint = clean_error
+
+        ui.render_fatal_error(
+            step="profiling",
+            message=message,
+            hint=hint,
+        )
+        raise typer.Exit(code=1) from None
 
 
 @app.callback()
@@ -133,15 +247,7 @@ def profile(
 
     # --- MODE 1: JSON OUTPUT ---
     if json_output:
-        try:
-            df, _ = _scan_file(path)
-            profiler = Profiler(df)
-            profile = profiler.run(bins=bins, top_k=top_k)
-            print(json.dumps(profile, default=str))
-        except Exception as e:
-            # Output error as JSON for machine parsing
-            print(json.dumps({"error": str(e)}))
-            raise typer.Exit(code=1) from None
+        _run_json_mode(path, bins, top_k, full_inference)
         return
 
     # --- MODE 2: CLI OUTPUT ---
@@ -156,99 +262,14 @@ def profile(
             )
             raise typer.Exit(code=1)
 
-        # --- Phase 1: Data Source Connection ---
-        try:
-            # We pass str(path) so it shows the relative path in the UI
-            ui.render_data_source_spinner(path.name)
+        # Phase 1: Data Source Connection
+        df, file_type, file_size = _connect_data_source(ui, path, full_inference)
 
-            # Logic: Scan and Detect
-            load_start = time.time()
-            df, file_type = _scan_file(path, full_inference=full_inference)
-            file_size = os.path.getsize(path)
+        # Phase 2: Data Profiling & Engine Telemetry
+        profiler = Profiler(df, dataset_name=path.name, dataset_format=file_type)
+        profile = _execute_profiling(ui, profiler, file_size, bins, top_k)
 
-            schema = df.collect_schema()
-            load_time = time.time() - load_start
-
-            datatypes = [str(t) for t in schema.values()]
-            datatype_counts = Counter(datatypes)
-            schema_info = ", ".join([f"{v} {k}" for k, v in datatype_counts.items()])
-
-            file_info = {"path": str(path), "size": _format_bytes(file_size), "type": file_type}
-
-            ui.render_data_source_panel(
-                file_info=file_info,
-                schema_info=schema_info,
-                columns=len(schema),
-                time_taken=load_time,
-            )
-
-        except Exception as e:
-            # If loading fails, we transition to error state and exit cleanly
-
-            raw_error = str(e)
-            # Strip out Polars' internal Python suggestions
-            clean_error = raw_error.split("You might want to try:")[0].strip()
-
-            ui.render_fatal_error(
-                step="data_source",
-                message=f"Connection failed to data source: {path}",
-                hint=clean_error,
-            )
-            raise typer.Exit(code=1) from None
-
-        # --- Phase 2: Data Profiling & Engine Telemetry ---
-        try:
-            progress = ui.render_engine_status_panel()
-            engine_messages = [
-                "Resolving lazy execution graph...",
-                "Allocating zero-copy memory buffers...",
-                "Vectorizing data streams...",
-                "Threading execution pipelines...",
-                "Collapsing data dimensions...",
-                "Calibrating Apache Arrow matrices...",
-                "Synthesizing profile topology...",
-            ]
-            active_message = random.choice(engine_messages)
-            progress.add_task(active_message, total=None)
-
-            profiler = Profiler(df, dataset_name=path.name, dataset_format=file_type)
-            profile = profiler.run(bins=bins, top_k=top_k)
-
-            engine_time = profile["_meta"]["engine_time_seconds"]
-            peak_ram_usage = _get_peak_ram_usage_in_mb()
-
-            throughput = (file_size / engine_time) / (1024**3) if engine_time > 0 else 0.0
-
-            ui.render_engine_telemetry_panel(
-                engine_time=engine_time,
-                throughput_gb_s=throughput,
-                peak_ram_usage=peak_ram_usage,
-            )
-
-        except Exception as e:
-            raw_error = str(e)
-            # Strip out Polars' internal Python suggestions
-            clean_error = raw_error.split("You might want to try:")[0].strip()
-
-            # If it's a parsing/type error, give the user the exact solution
-            if "parse" in raw_error or "primitive" in raw_error:
-                message = "Dataset contains mixed types (Schema Drift)."
-                hint = (
-                    f"{clean_error}\n\n[brand]Tip:[/] Run with [bold]--full-inference[/bold] "
-                    "to force full-file schema inference."
-                )
-            else:
-                message = "Engine panicked during profiling."
-                hint = clean_error
-
-            ui.render_fatal_error(
-                step="profiling",
-                message=message,
-                hint=hint,
-            )
-            raise typer.Exit(code=1) from None
-
-        # --- Phase 3: Results Dashboard ---
+        # Phase 3: Results Dashboard
         ui.render_profiling_results(profile)
 
 
