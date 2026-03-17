@@ -1,3 +1,4 @@
+from collections import defaultdict
 from types import TracebackType
 from typing import Any
 
@@ -273,65 +274,101 @@ class NetraCLIRenderer:
 
     # --- Phase 3: Profiling Results ---
 
+    # Data Health Panel
+    def _build_health_summary_text(self, alerts: list[DiagnosticAlert], row_count: int) -> str:
+        """Calculates the aggregate anomaly counts and formats the summary header."""
+        row_count_string = f"[muted] Rows Profiled:[/muted] [value]{row_count:,}[/value]"
+
+        if not alerts:
+            return row_count_string
+
+        critical_alerts_count = sum(1 for alert in alerts if alert["level"] == "CRITICAL")
+        warning_alerts_count = sum(1 for alert in alerts if alert["level"] == "WARNING")
+
+        if critical_alerts_count == 0 and warning_alerts_count == 0:
+            return row_count_string
+
+        issues_count_parts = []
+        if critical_alerts_count > 0:
+            issues_count_parts.append(f"[bold #8F0000]{critical_alerts_count} CRITICAL[/]")
+        if warning_alerts_count > 0:
+            s = "S" if warning_alerts_count > 1 else ""
+            issues_count_parts.append(f"[bold #997602]{warning_alerts_count} WARNING{s}[/]")
+
+        joined_issues_count = "[muted],[/muted] ".join(issues_count_parts)
+        issues_count_string = (
+            f"[muted]Data Issues found: \\[[/muted]{joined_issues_count}[muted]][/muted]"
+        )
+        return f"{row_count_string} [muted]|[/muted] {issues_count_string}"
+
+    def _get_alert_badge(self, alert_level: str, alert_type: str) -> str:
+        """Returns the color-coded alert badge based on alert severity."""
+        if alert_level == "CRITICAL":
+            return f"[bold #8F0000]\\[{alert_type}][/]"
+        elif alert_level == "WARNING":
+            return f"[bold #997602]\\[{alert_type}][/]"
+        return f"[bold #8C8C8C]\\[{alert_type}][/]"
+
     def _render_data_health_panel(self, alerts: list[DiagnosticAlert], row_count: int) -> Panel:
         """Renders the prioritized list of dataset anomalies, anchored by the row count."""
+        health_summary_text = self._build_health_summary_text(alerts, row_count)
 
-        grid = Table.grid(padding=(1, 2))
-        grid.add_column(justify="center", vertical="top")  # Alert Level Label
-        grid.add_column(justify="left")  # Target Column + Diagnostic Message
-
-        row_count_string = f"[muted] Rows Profiled:[/muted] [value]{row_count:,}[/value]"
-        summary_text = row_count_string
+        grid = Table.grid(padding=(0, 0))
+        grid.add_column(justify="left")
 
         if not alerts:
             grid.add_row(
-                " [bold #000000 on green][ HEALTHY ][/]",
+                " [bold #000000 on green][ HEALTHY ][/]"
                 "[value]Dataset is healthy. No anomalies detected.[/value]",
             )
         else:
-            critical_alerts_count = sum(1 for alert in alerts if alert["level"] == "CRITICAL")
-            warning_alerts_count = sum(1 for alert in alerts if alert["level"] == "WARNING")
+            # 1. We group the alerts by column name
+            alerts_by_column: dict[str, list[DiagnosticAlert]] = defaultdict(list)
+            for alert in alerts:
+                alerts_by_column[alert["column_name"]].append(alert)
 
-            if critical_alerts_count > 0 or warning_alerts_count > 0:
-                issues_count_parts = []
-                if critical_alerts_count > 0:
-                    issues_count_parts.append(f"[bold #8C0000]{critical_alerts_count} CRITICAL[/]")
-                if warning_alerts_count > 0:
-                    s = "S" if warning_alerts_count > 1 else ""
-                    issues_count_parts.append(f"[bold #997602]{warning_alerts_count} WARNING{s}[/]")
+            # 2. We sorted the grouped list alphabetically
+            sorted_columns = sorted(alerts_by_column.keys())
 
-                joined_issues_count = "[muted],[/muted] ".join(issues_count_parts)
-                issues_count_string = (
-                    f"[muted]Data Issues found: \\[[/muted]{joined_issues_count}[muted]][/muted]"
-                )
-                summary_text = f"{row_count_string} [muted]|[/muted] {issues_count_string}"
-
-            # Sort alerts by severity: Critical (0) -> Warning (1) -> Info (2)
             alert_level_ranks = {"CRITICAL": 0, "WARNING": 1, "INFO": 2}
-            sorted_alerts = sorted(alerts, key=lambda x: alert_level_ranks.get(x["level"], 3))
 
-            # Calculate the width of the longest alert type in the profile
-            max_badge_length = max((len(a["type"]) for a in sorted_alerts), default=16)
+            for i, column in enumerate(sorted_columns):
+                # Add spacing between column blocks (but not before the first one)
+                if i > 0:
+                    grid.add_row("")
 
-            for alert in sorted_alerts:
-                alert_level = alert["level"]
-                alert_column = alert["column_name"]
-                alert_message = alert["message"]
-                alert_type = alert["type"].replace("_", " ")
+                # Render the Column Name Header
+                grid.add_row(f" [not dim][brand]{column}[/brand][/]")
 
-                if alert_level == "CRITICAL":
-                    badge = f" [bold #000000 on #7A0000][ {alert_type:^{max_badge_length}} ][/]"
-                elif alert_level == "WARNING":
-                    badge = f" [bold #000000 on #7D6000][ {alert_type:^{max_badge_length}} ][/]"
-                else:
-                    badge = f" [bold #000000 on #737373][ {alert_type:^{max_badge_length}} ][/]"
+                column_alerts = alerts_by_column[column]
+                # 3. Alerts per column is sorted by alert level
+                column_alerts.sort(key=lambda x: alert_level_ranks.get(x["level"], 3))
 
-                alert_details = f"[brand]{alert_column}[/brand]\n[muted]└─ {alert_message}[/muted]"
+                # 4. Alerts per column is finally grouped by alert type
+                seen_types = set()
 
-                grid.add_row(badge, alert_details)
+                for alert in column_alerts:
+                    alert_type = alert["type"]
+                    alert_type_for_display = alert_type.replace("_", " ")
+                    if alert_type in seen_types:
+                        continue
+                    seen_types.add(alert_type)
 
-        # Assemble the final group (Summary text, blank line, grid)
-        panel_content = Group(summary_text, Padding(grid, (2, 0, 0, 0)))
+                    # Gather all messages for this specific alert type
+                    messages = [
+                        alert["message"] for alert in column_alerts if alert["type"] == alert_type
+                    ]
+
+                    badge = self._get_alert_badge(alert["level"], alert_type_for_display)
+
+                    grid.add_row(f" [muted]└─[/muted] {badge}")
+
+                    for msg in messages:
+                        # We use bullet points if there are multiple alerts to create a clean list
+                        prefix = "• " if len(messages) > 1 else ""
+                        grid.add_row(f"      [muted]{prefix}{msg}[/muted]")
+
+        panel_content = Group(health_summary_text, Padding(grid, (2, 0, 0, 0)))
 
         return Panel(
             panel_content,
