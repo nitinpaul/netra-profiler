@@ -1,7 +1,7 @@
 [project]
 name = "netra-profiler"
 version = "0.1.0"
-description = "Polars-based high-performance data profiler and reporting tool"
+description = "A super-fast, Arrow-native data profiling and quality tool built from the ground up with Polars."
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [
@@ -26,6 +26,11 @@ dev = [
     "hypothesis>=6.0.0", # Property-based testing
     "ruff>=0.3.0",       # Linter/Formatter (Rust-based)
     "mypy>=1.8.0",       # Static Type Checker
+]
+docs = [
+    "mkdocs<2.0",
+    "mkdocs-material>=9.7.4",
+    "mkdocstrings[python]>=1.0.3",
 ]
 
 [project.scripts]

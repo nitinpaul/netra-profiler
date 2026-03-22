@@ -1,0 +1,63 @@
+site_name: Netra Profiler
+site_description: High-performance profiling and data quality tool built with Polars.
+site_author: Nitin Paul
+repo_url: https://github.com/netrabase/netra-profiler
+
+theme:
+  name: material
+  features:
+    - navigation.tabs # Top-level navigation tabs
+    - navigation.sections # Grouped sidebar
+    - navigation.top # Back-to-top button
+    - navigation.footer # The Prev/Next buttons at the bottom
+    - search.suggest # Search auto-complete
+    - search.highlight # Highlight search terms
+    - content.code.copy # Copy buttons on code blocks
+    - content.code.annotate # Allow inline code annotations
+    - content.footnote.tooltips # Renders footnotes as inline tooltips
+  palette:
+    # Palette toggle for dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: black
+      accent: amber
+      toggle:
+        icon: material/weather-night
+        name: Switch to light mode
+    # Palette toggle for light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: black
+      accent: amber
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            docstring_style: google
+            show_root_heading: true
+            show_source: true
+            show_signature_annotations: true
+
+markdown_extensions:
+  - attr_list # Allows adding HTML classes/IDs via Markdown
+  - md_in_html # Tells the parser to render Markdown inside HTML <div> tags
+  - pymdownx.superfences # Advanced code blocks
+  - admonition # Enables standard admonitions (callouts)
+  - footnotes
+  - pymdownx.emoji: # Enables the :material-*: icons
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+nav:
+  - User Guide: index.md
+  - Getting Started:
+      - Quickstart: getting_started/quickstart.md
+  - Reference:
+      - API / Library: reference/api.md
+      - CLI Commands: reference/cli.md
